@@ -52,17 +52,7 @@ def build_app(
     }
 
     def has_person(frame, tracker: PersonTracker) -> bool:
-        result = tracker.model.predict(source=frame, conf=conf, iou=iou, verbose=False)[0]
-        boxes = result.boxes
-        if boxes is None or boxes.cls is None or boxes.conf is None:
-            return False
-
-        cls_list = boxes.cls.tolist()
-        conf_list = boxes.conf.tolist()
-        for cls_id, score in zip(cls_list, conf_list):
-            if int(cls_id) == 0 and float(score) >= conf:
-                return True
-        return False
+        return tracker.has_person(frame)
 
     def find_next_person_frame(
         cap: cv2.VideoCapture,
@@ -163,7 +153,7 @@ def build_app(
                 else:
                     fps_color = (0, 255, 0)
 
-                view = frame.copy()
+                view = frame
 
                 for e in events:
                     x1, y1, x2, y2 = map(int, e.xyxy)
@@ -206,7 +196,7 @@ def build_app(
                 with state_lock:
                     state["current_frame"] = int(frame_idx)
 
-                ok_jpg, buf = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                ok_jpg, buf = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 if not ok_jpg:
                     frame_idx += 1
                     continue

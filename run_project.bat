@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 if "%~1"=="" (
-    set "CONFIG=configs\toan_config.example.json"
+    set "CONFIG=configs\toan_config.sample1.json"
 ) else (
     set "CONFIG=%~1"
 )
@@ -44,7 +44,7 @@ if errorlevel 1 (
 
 for /f "usebackq delims=" %%S in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).video.source } catch { '' }"`) do set "VIDEO_SOURCE=%%S"
 if "%VIDEO_SOURCE%"=="" (
-    set "VIDEO_SOURCE=data/ship_room_sample.mp4"
+    set "VIDEO_SOURCE=data/sample1.mp4"
 )
 
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.model_name } catch { '' }"`) do set "MODEL_NAME=%%M"
@@ -55,7 +55,7 @@ if "%MODEL_NAME%"=="" (
 echo [INFO] Exporting person appearance timeline...
 echo %VIDEO_SOURCE%| findstr /r "^[0-9][0-9]*$" >nul
 if errorlevel 1 (
-    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --out artifacts/events/person_appearance_tour.json
+    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --tracks-jsonl artifacts/events/person_tracks.jsonl --out artifacts/events/person_appearance_tour.json
     if errorlevel 1 (
         echo [WARN] Could not export person appearance timeline.
     ) else (

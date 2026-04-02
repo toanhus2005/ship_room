@@ -23,11 +23,22 @@ class DetectionConfig(BaseModel):
     model_name: str = "yolov8s.pt"
     confidence_threshold: float = 0.35
     iou_threshold: float = 0.5
+    min_box_area_ratio: float = 0.0015
+    border_exclusion_px: int = 0
+    inference_scale: float = 0.75
+    inference_imgsz: int = 640
+    inference_half: bool = False
 
 
 class TrackingConfig(BaseModel):
     track_buffer: int = 30
     match_threshold: float = 0.8
+    id_reassign_iou_threshold: float = 0.2
+    id_reassign_center_distance: float = 0.55
+    id_reassign_max_frame_gap: int = 12
+    id_reassign_min_area_ratio: float = 0.4
+    id_reassign_max_area_ratio: float = 2.5
+    id_reassign_max_aspect_ratio_delta: float = 0.8
 
 
 class ZoneConfig(BaseModel):

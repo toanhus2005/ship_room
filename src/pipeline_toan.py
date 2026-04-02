@@ -29,7 +29,7 @@ def run_pipeline(config: ToanConfig) -> None:
     ensure_parent(config.output.events_jsonl)
 
     all_events: List[PersonTrackEvent] = []
-    start_utc = datetime.now(UTC).replace(tzinfo=None)
+    start_utc = datetime.now(UTC)
 
     with config.output.events_jsonl.open("w", encoding="utf-8") as f:
         for packet in iter_sampled_frames(
@@ -41,8 +41,10 @@ def run_pipeline(config: ToanConfig) -> None:
 
             for e in events:
                 row = asdict(e)
+                elapsed_seconds = (packet.timestamp_utc - start_utc).total_seconds()
                 row["timestamp_local"] = packet.timestamp_local.isoformat()
                 row["timestamp_utc"] = packet.timestamp_utc.isoformat()
+                row["elapsed_seconds"] = round(float(elapsed_seconds), 3)
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
             all_events.extend(events)
 

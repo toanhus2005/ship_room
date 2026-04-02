@@ -9,7 +9,8 @@ Phần này triển khai cho Toàn:
 - [src/module1/video_input.py](src/module1/video_input.py): đọc video/camera và sinh frame theo thời gian.
 - [src/module2/person_tracker.py](src/module2/person_tracker.py): detect + track người, kiểm tra vào `package_zone`.
 - [src/pipeline_toan.py](src/pipeline_toan.py): chạy pipeline end-to-end và xuất sự kiện JSONL.
-- [configs/toan_config.example.json](configs/toan_config.example.json): cấu hình nguồn video, ROI, ngưỡng detect/track.
+- [configs/toan_config.sample1.json](configs/toan_config.sample1.json): config mặc định để chạy với `data/sample1.mp4`.
+- [configs/toan_config.example.json](configs/toan_config.example.json): config tham khảo để tinh chỉnh thêm.
 
 ## Cài đặt
 1. Tạo môi trường Python 3.10+.
@@ -17,13 +18,14 @@ Phần này triển khai cho Toàn:
    - `pip install -r requirements.txt`
 
 ## Chạy thử
-- Chuẩn bị video tại `data/ship_room_sample.mp4` (hoặc sửa `video.source` trong config).
+- Mặc định dự án chạy với `data/sample1.mp4`.
 - Chạy:
-  - `python -m src.pipeline_toan --config configs/toan_config.example.json`
+  - `python -m src.pipeline_toan --config configs/toan_config.sample1.json`
 
 ## Chạy tự động (Windows)
 - Chạy toàn bộ setup + pipeline bằng một lệnh:
   - `run_project.bat`
+  - Lệnh này mặc định dùng: `configs/toan_config.sample1.json`
 - Dùng config khác:
   - `run_project.bat configs\\your_config.json`
 
@@ -37,7 +39,16 @@ Script sẽ tự:
 - Mỗi dòng gồm:
   - `frame_index`, `track_id`, `xyxy`, `confidence`
   - `in_package_zone`
-  - `timestamp_utc`, `timestamp_local`
+  - `timestamp_utc`, `timestamp_local`, `elapsed_seconds`
+
+- File timeline theo từng ID: `artifacts/events/person_appearance_tour.json`
+- Trong file này có `track_events`, mỗi phần tử gồm:
+  - `track_id`
+  - `first_frame`, `last_frame`
+  - `first_second`, `last_second`, `duration_second`
+  - `first_timestamp_utc`, `last_timestamp_utc`
+  - `first_timestamp_local`, `last_timestamp_local`
+  - `detections`, `zone_hits`, `max_confidence`
 
 ## Gợi ý bàn giao cho Lâm (Module 3)
 Lâm có thể dùng trực tiếp `person_tracks.jsonl` để tìm:
