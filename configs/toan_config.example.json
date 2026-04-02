@@ -1,0 +1,26 @@
+{
+  "video": {
+    "source": "data/ship_room_sample.mp4",
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "stream": {
+    "sample_fps": 5.0,
+    "output_frames_dir": "artifacts/frames",
+    "save_sampled_frames": false
+  },
+  "detection": {
+    "model_name": "yolov8s.pt",
+    "confidence_threshold": 0.35,
+    "iou_threshold": 0.5
+  },
+  "tracking": {
+    "track_buffer": 30,
+    "match_threshold": 0.8
+  },
+  "zone": {
+    "package_zone_polygon": [[200, 150], [1100, 150], [1100, 650], [200, 650]]
+  },
+  "output": {
+    "events_jsonl": "artifacts/events/person_tracks.jsonl"
+  }
+}

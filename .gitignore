@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+.vscode/
+
+artifacts/
+!artifacts/.gitkeep
+
+# Optional local config/examples generated during testing
+configs/*.local.json
+
+# Python packaging / tooling
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
