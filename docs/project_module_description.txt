@@ -1,0 +1,175 @@
+SHIP ROOM MONITORING - MO TA CHI TIET TOAN BO DU AN
+Ngay cap nhat: 2026-04-02
+
+1) Muc tieu du an
+Du an xu ly video giam sat khu vuc dong goi theo pipeline:
+- Lay frame tu video/camera.
+- Detect nguoi tren tung frame.
+- Track ID nguoi qua nhieu frame.
+- Danh dau nguoi co vao vung package_zone hay khong.
+- Xuat su kien de phan tich va cung cap web preview de tua/skip nhanh.
+
+2) Cau truc va vai tro tung module
+2.1) src/config.py
+Vai tro: Dinh nghia schema cau hinh bang Pydantic.
+Thanh phan:
+- VideoSourceConfig: source va timezone.
+- StreamConfig: sample_fps, output_frames_dir, save_sampled_frames.
+- DetectionConfig: model_name, confidence_threshold, iou_threshold.
+- TrackingConfig: track_buffer, match_threshold.
+- ZoneConfig: da giac package_zone_polygon.
+- OutputConfig: duong dan events_jsonl.
+- ToanConfig: gom toan bo cau hinh.
+Gia tri: Tach bien tham so khoi code, de doi camera/ROI/nguong nhanh.
+
+2.2) src/module1/video_input.py
+Vai tro: Ingest video va phat frame theo tan suat mau.
+Thanh phan:
+- FramePacket: frame_index, frame, timestamp_utc, timestamp_local.
+- _open_video_source: mo camera index hoac duong dan file.
+- iter_sampled_frames: generator tra ve cac frame duoc lay mau.
+
+Co che tinh FPS va lay mau frame:
+- Native FPS duoc doc tu OpenCV CAP_PROP_FPS, fallback = 25.0 neu khong lay duoc.
+- Buoc nhay frame:
+  step = max(1, round(native_fps / max(sample_fps, 0.1)))
+- Chi frame co frame_index % step == 0 moi duoc xu ly.
+
+Co che dong bo timestamp:
+- elapsed_seconds = frame_index / native_fps
+- timestamp_utc = start_utc + elapsed_seconds
+- timestamp_local doi timezone theo config.
+
+Y nghia: Giam tai tinh toan khi khong can xu ly moi frame nhung van bao toan timeline.
+
+2.3) src/module2/person_tracker.py
+Vai tro: Detect + tracking + zone trigger tren moi frame.
+Thanh phan:
+- PersonTrackEvent: frame_index, track_id, bbox xyxy, confidence, in_package_zone.
+- PersonTracker:
+  + Khoi tao YOLO model.
+  + Khoi tao ByteTrack.
+  + Khoi tao PolygonZone.
+- process_frame:
+  + predict voi classes=[0] (chi nguoi).
+  + chuyen detections sang supervision.
+  + update tracker de gan ID on dinh qua frame.
+  + trigger polygon zone de danh dau vao vung package.
+- summarize_trajectories: tong hop first_frame, last_frame, zone_hits theo track_id.
+
+Y nghia: Tao su kien co cau truc va giu tinh lien tuc ID, phuc vu thong ke va canh bao.
+
+2.4) src/pipeline_toan.py
+Vai tro: Orchestrator chay pipeline batch tu config den output JSONL.
+Luong chinh:
+- load_config doc JSON va validate bang ToanConfig.
+- run_pipeline:
+  + tao tracker theo config.
+  + goi iter_sampled_frames de lay frame.
+  + goi process_frame tren tung frame.
+  + ghi moi event thanh 1 dong JSONL, kem timestamp local/utc.
+  + in summary cuoi cung theo track_id.
+
+Output mac dinh:
+- artifacts/events/person_tracks.jsonl
+
+2.5) src/module1/person_event_tour.py
+Vai tro: Quet nhanh timeline de tim cac doan co nguoi xuat hien.
+Thanh phan:
+- PersonAppearanceEvent: start/end frame, start/end second, duration, max_confidence, detections.
+- _detect_person: kiem tra frame co nguoi va lay do tin cay cao nhat.
+- scan:
+  + quet theo stride duoc tinh tu scan_fps.
+  + mo event khi thay nguoi.
+  + dong event khi vang mat qua absence_tolerance_sec.
+  + loc event ngan hon min_event_sec.
+
+Co che skip nhanh theo scan (offline):
+- stride = max(1, round(native_fps / max(scan_fps, 0.1)))
+- cap.set(CAP_PROP_POS_FRAMES, frame_index) de nhay den frame can quet.
+- KQ la danh sach cac khoang thoi gian co nguoi, de tua nhanh den doan quan tam.
+
+Output:
+- artifacts/events/person_appearance_tour.json
+
+2.6) src/module2/live_preview_web.py
+Vai tro: Web preview realtime, hien detect/track va dieu khien playback.
+Thanh phan chinh:
+- build_app: khoi tao Flask app, doc metadata video, tao shared state.
+- frame_generator: vong lap stream MJPEG va xu ly detect/track tung frame.
+- has_person: check nhanh frame co person.
+- find_next_person_frame: tim frame tiep theo co person theo buoc nhay.
+- API:
+  + POST /skip-next: yeu cau skip den nguoi tiep theo.
+  + GET /status: tra current frame/time, paused, thong tin skip.
+  + POST /toggle-pause: dung/chay.
+  + POST /seek-relative: tua +/- giay.
+  + POST /seek-to: tua den moc giay cu the.
+
+Co che tinh FPS (hien thi tren khung hinh):
+- Do thoi gian xu ly 1 frame: dt.
+- FPS tuc thoi: inst = 1/dt.
+- Lam muot bang EMA:
+  ema_fps = inst neu lan dau,
+  ema_fps = 0.9 * ema_fps + 0.1 * inst cho cac frame sau.
+- To mau FPS:
+  + do khi <20,
+  + vang khi 20-29,
+  + xanh khi >=30.
+
+Co che skip den doan co nguoi (realtime):
+- Khi nguoi dung bam Skip next person, server dat co skip_requested = True.
+- Trong frame_generator, neu co skip:
+  + goi find_next_person_frame(start = frame_hien_tai + 1, step = native_fps).
+  + neu khong tim thay den cuoi video thi quet vong tu dau den frame_hien_tai.
+  + neu tim thay:
+    * cap seek den target frame,
+    * reset tracker de trang thai tracking phu hop vi tri moi,
+    * cap nhat last_skip_frame.
+
+Luu y ky thuat:
+- Vi quet skip theo buoc xap xi 1 giay (step=native_fps), muc tieu la toc do.
+- Co the khong trung chinh xac frame dau tien nhat co nguoi, nhung dat hieu qua thao tac.
+
+2.7) run_project.bat
+Vai tro: Script chay full tren Windows bang 1 lenh.
+Trinh tu:
+- Tao .venv neu chua co.
+- Activate .venv.
+- Cai requirements.
+- Chay pipeline_toan.
+- Trich video source va model tu config.
+- Chay person_event_tour de xuat timeline nguoi.
+- Mo live_preview_web va tu dong mo trinh duyet.
+
+3) Du lieu dau vao/dau ra
+Dau vao:
+- data/ship_room_sample.mp4 (hoac camera/RTSP qua config).
+- yolov8s.pt.
+- configs/toan_config.example.json.
+
+Dau ra:
+- artifacts/events/person_tracks.jsonl.
+- artifacts/events/person_appearance_tour.json.
+- (tuy chon) frame mau trong artifacts/frames neu bat save_sampled_frames.
+
+4) Gia tri cua kien truc hien tai
+- Tach bien module ro rang, de bao tri va nang cap.
+- Ho tro ca batch mode (pipeline) va interactive mode (web preview).
+- Co co che giam tai bang sampling.
+- Co timeline su kien de phuc vu module downstream/bao cao.
+
+5) Han che va huong cai tien
+Han che:
+- Skip-next trong live preview uu tien nhanh hon chinh xac tuyet doi.
+- Sau seek/skip, tracker reset nen ID co the khong lien tuc truoc/sau diem nhay.
+- Phu thuoc do chinh xac model YOLO theo bo du lieu thuc te.
+
+Huong cai tien:
+- Bo sung coarse-to-fine skip (quet tho roi refine quanh vung tim thay).
+- Bo sung xuat clip highlight theo event.
+- Them dashboard thong ke zone_hits theo ca/khung gio.
+- Toi uu inferencing (batching/TensorRT/GPU scheduling) neu can FPS cao hon.
+
+Ket luan:
+He thong da day du cho bai toan theo doi nguoi trong khu vuc dong goi, co kha nang mo rong cho canh bao nghiep vu va tra cuu su kien nhanh.
