@@ -28,17 +28,19 @@ class DetectionConfig(BaseModel):
     inference_scale: float = 0.75
     inference_imgsz: int = 640
     inference_half: bool = False
+    max_detections: int = 30
 
 
 class TrackingConfig(BaseModel):
-    track_buffer: int = 30
-    match_threshold: float = 0.8
+    track_buffer: int = 60
+    match_threshold: float = 0.7
     id_reassign_iou_threshold: float = 0.2
     id_reassign_center_distance: float = 0.55
-    id_reassign_max_frame_gap: int = 12
+    id_reassign_max_frame_gap: int = 18
     id_reassign_min_area_ratio: float = 0.4
     id_reassign_max_area_ratio: float = 2.5
     id_reassign_max_aspect_ratio_delta: float = 0.8
+    id_reassign_min_score: float = 0.0
 
 
 class ZoneConfig(BaseModel):
