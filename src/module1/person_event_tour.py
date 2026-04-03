@@ -41,7 +41,7 @@ class PersonTrackAppearanceEvent:
 
 
 class PersonEventTour:
-    def __init__(self, model_name: str = "yolov8s.pt", confidence: float = 0.35) -> None:
+    def __init__(self, model_name: str = "yolov8n.pt", confidence: float = 0.35) -> None:
         self.model = YOLO(model_name)
         self.confidence = confidence
 
@@ -246,7 +246,7 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fast tour to moments where a person appears")
     parser.add_argument("--video", type=str, required=True, help="Path to input video")
-    parser.add_argument("--model", type=str, default="yolov8s.pt", help="YOLO model")
+    parser.add_argument("--model", type=str, default="yolov8n.pt", help="YOLO model")
     parser.add_argument("--conf", type=float, default=0.35, help="Person confidence threshold")
     parser.add_argument("--scan-fps", type=float, default=2.0, help="Sampling fps for scan")
     parser.add_argument(

@@ -49,7 +49,7 @@ if "%VIDEO_SOURCE%"=="" (
 
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.model_name } catch { '' }"`) do set "MODEL_NAME=%%M"
 if "%MODEL_NAME%"=="" (
-    set "MODEL_NAME=yolov8s.pt"
+    set "MODEL_NAME=yolov8n.pt"
 )
 
 echo [INFO] Exporting person appearance timeline...

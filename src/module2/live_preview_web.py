@@ -406,7 +406,7 @@ def main() -> None:
     parser.add_argument("--video", type=str, required=True, help="Input video path")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host")
     parser.add_argument("--port", type=int, default=8787, help="Port")
-    parser.add_argument("--model", type=str, default="yolov8s.pt", help="YOLO model")
+    parser.add_argument("--model", type=str, default="yolov8n.pt", help="YOLO model")
     parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument(

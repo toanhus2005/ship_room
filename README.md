@@ -1,70 +1,38 @@
-# Ship Room Monitoring - Workstream Toàn (Module 1 + 2)
+# Ship Room Monitoring
 
-## Scope
-Phần này triển khai cho Toàn:
-- Module 1: nhận video/camera, tách frame, gắn timestamp.
-- Module 2: phát hiện người, tracking ID qua nhiều frame, đánh dấu người có vào vùng gói hàng hay không.
+Pipeline detect va track nguoi trong phong kho, su dung YOLOv8 + DeepSORT.
 
-## Cấu trúc chính
-- [src/module1/video_input.py](src/module1/video_input.py): đọc video/camera và sinh frame theo thời gian.
-- [src/module2/person_tracker.py](src/module2/person_tracker.py): detect + track người, kiểm tra vào `package_zone`.
-- [src/pipeline_toan.py](src/pipeline_toan.py): chạy pipeline end-to-end và xuất sự kiện JSONL.
-- [configs/toan_config.sample1.json](configs/toan_config.sample1.json): config mặc định để chạy với `data/sample1.mp4`.
-- [configs/toan_config.example.json](configs/toan_config.example.json): config tham khảo để tinh chỉnh thêm.
+## Kien truc hien tai
+- `src/module1/video_input.py`: doc video/camera va sample frame theo `sample_fps`.
+- `src/module2/person_tracker.py`: detect person (YOLO) + track ID (DeepSORT) + check vao `package_zone`.
+- `deep_sort/`: ma DeepSORT da duoc nhung truc tiep vao project.
+- `src/pipeline_toan.py`: chay end-to-end va ghi su kien JSONL co timestamp.
+- `src/module1/person_event_tour.py`: tong hop timeline xuat hien theo track.
+- `src/module2/live_preview_web.py`: live preview web.
 
-## Cài đặt
-1. Tạo môi trường Python 3.10+.
-2. Cài dependencies:
+## Tinh nang dang dung
+- Detect/track theo stack tu repo tham chieu (YOLOv8n + DeepSORT).
+- Luu timestamp UTC/local va elapsed_seconds cho tung event.
+- Ho tro `skip_until_person=true`: bo qua frame cho den khi phat hien nguoi dau tien moi bat dau tracking.
+
+## Cai dat
+1. Python 3.10+.
+2. Cai dependencies:
    - `pip install -r requirements.txt`
 
-## Chạy thử
-- Mặc định dự án chạy với `data/sample1.mp4`.
-- Chạy:
+## Chay nhanh
+- Pipeline:
   - `python -m src.pipeline_toan --config configs/toan_config.sample1.json`
-
-## Chạy tự động (Windows)
-- Chạy toàn bộ setup + pipeline bằng một lệnh:
+- Chay full (pipeline + export timeline + live preview):
   - `run_project.bat`
-  - Lệnh này mặc định dùng: `configs/toan_config.sample1.json`
-- Dùng config khác:
-  - `run_project.bat configs\\your_config.json`
 
-Script sẽ tự:
-- tạo `.venv` nếu chưa có,
-- cài dependencies từ `requirements.txt`,
-- chạy pipeline với config bạn truyền vào.
+## Cau hinh chinh
+- File mau: `configs/toan_config.sample1.json`
+- Model: `yolov8n.pt`
+- DeepSORT weights: `deep_sort/deep/checkpoint/ckpt.t7`
+- Skip den khi co nguoi:
+  - `stream.skip_until_person: true`
 
 ## Output
-- File sự kiện: `artifacts/events/person_tracks.jsonl`
-- Mỗi dòng gồm:
-  - `frame_index`, `track_id`, `xyxy`, `confidence`
-  - `in_package_zone`
-  - `timestamp_utc`, `timestamp_local`, `elapsed_seconds`
-
-- File timeline theo từng ID: `artifacts/events/person_appearance_tour.json`
-- Trong file này có `track_events`, mỗi phần tử gồm:
-  - `track_id`
-  - `first_frame`, `last_frame`
-  - `first_second`, `last_second`, `duration_second`
-  - `first_timestamp_utc`, `last_timestamp_utc`
-  - `first_timestamp_local`, `last_timestamp_local`
-  - `detections`, `zone_hits`, `max_confidence`
-
-## Gợi ý bàn giao cho Lâm (Module 3)
-Lâm có thể dùng trực tiếp `person_tracks.jsonl` để tìm:
-- thời điểm người đi vào vùng package,
-- khoảng dừng gần package,
-- các mốc nghi vấn tiếp cận.
-
-## Báo cáo công việc cá nhân
-- File báo cáo theo yêu cầu team: `docs/toan_work_report.md`
-
-## Task checklist (20/3 - 25/3)
-- [x] Nhận video từ camera/file
-- [x] Tách frame theo tần suất mẫu
-- [x] Đồng bộ timestamp
-- [x] Detect người theo frame
-- [x] Track ID cùng người qua nhiều frame
-- [x] Cờ người vào vùng gói hàng
-- [ ] Tinh chỉnh ROI theo camera thực tế
-- [ ] Đánh giá độ chính xác trên dữ liệu thật
+- Event track: `artifacts/events/person_tracks.jsonl`
+- Timeline appearance: `artifacts/events/person_appearance_tour.json`

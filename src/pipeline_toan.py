@@ -30,6 +30,7 @@ def run_pipeline(config: ToanConfig) -> None:
 
     all_events: List[PersonTrackEvent] = []
     start_utc = datetime.now(UTC)
+    started_processing = not config.stream.skip_until_person
 
     with config.output.events_jsonl.open("w", encoding="utf-8") as f:
         for packet in iter_sampled_frames(
@@ -37,6 +38,15 @@ def run_pipeline(config: ToanConfig) -> None:
             stream_cfg=config.stream,
             start_utc=start_utc,
         ):
+            if not started_processing:
+                if tracker.has_person(packet.frame):
+                    started_processing = True
+                    print(
+                        f"[INFO] First person detected at frame={packet.frame_index}, start tracking."
+                    )
+                else:
+                    continue
+
             events = tracker.process_frame(packet.frame_index, packet.frame)
 
             for e in events:

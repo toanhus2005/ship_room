@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 import cv2
 import numpy as np
 import supervision as sv
-from deep_sort_realtime.deepsort_tracker import DeepSort
+from deep_sort.deep_sort import DeepSort
 from ultralytics import YOLO
 
 from src.config import DetectionConfig, TrackingConfig, ZoneConfig
@@ -30,25 +30,10 @@ class PersonTracker:
     ) -> None:
         self.model = YOLO(detection_cfg.model_name)
         self.confidence_threshold = detection_cfg.confidence_threshold
-        self.iou_threshold = detection_cfg.iou_threshold
-        self.min_box_area_ratio = detection_cfg.min_box_area_ratio
-        self.min_box_height_ratio = detection_cfg.min_box_height_ratio
-        self.min_box_height_width_ratio = detection_cfg.min_box_height_width_ratio
-        self.border_exclusion_px = detection_cfg.border_exclusion_px
-        self.inference_scale = max(0.25, min(1.0, detection_cfg.inference_scale))
-        self.inference_imgsz = detection_cfg.inference_imgsz
-        self.inference_half = detection_cfg.inference_half
-        self.max_detections = detection_cfg.max_detections
+        self.repo_device = detection_cfg.repo_device
+        self.deepsort_min_confidence = tracking_cfg.repo_deepsort_min_confidence
 
-        self.tracker = DeepSort(
-            max_age=tracking_cfg.track_buffer,
-            n_init=tracking_cfg.deepsort_n_init,
-            max_iou_distance=tracking_cfg.deepsort_max_iou_distance,
-            max_cosine_distance=tracking_cfg.deepsort_max_cosine_distance,
-            nn_budget=tracking_cfg.deepsort_nn_budget,
-            embedder=tracking_cfg.deepsort_embedder,
-            polygon=False,
-        )
+        self.tracker = self._build_tracker(tracking_cfg)
 
         polygon = np.array(zone_cfg.package_zone_polygon, dtype=np.int32)
         self.zone = sv.PolygonZone(polygon=polygon)
@@ -60,35 +45,10 @@ class PersonTracker:
 
         person_mask = det.class_id == 0
         det = det[person_mask]
-        det = self._filter_person_detections(det, frame)
-
         if len(det) == 0:
             return []
 
-        ds_detections: List[Tuple[List[float], float, str]] = []
-        for xyxy, conf in zip(det.xyxy, det.confidence):
-            left = float(xyxy[0])
-            top = float(xyxy[1])
-            width = float(xyxy[2] - xyxy[0])
-            height = float(xyxy[3] - xyxy[1])
-            ds_detections.append(([left, top, width, height], float(conf), "person"))
-
-        tracks = self.tracker.update_tracks(ds_detections, frame=frame)
-
-        track_boxes: List[Tuple[float, float, float, float]] = []
-        track_confs: List[float] = []
-        track_ids: List[int] = []
-
-        for track in tracks:
-            if not track.is_confirmed() or track.time_since_update > 0:
-                continue
-
-            ltrb = track.to_ltrb()
-            track_boxes.append(
-                (float(ltrb[0]), float(ltrb[1]), float(ltrb[2]), float(ltrb[3]))
-            )
-            track_ids.append(int(track.track_id))
-            track_confs.append(float(getattr(track, "det_conf", 0.0) or 0.0))
+        track_boxes, track_ids, track_confs = self._update_tracks(det, frame)
 
         if not track_boxes:
             return []
@@ -114,6 +74,88 @@ class PersonTracker:
             )
         return events
 
+    def _build_tracker(self, tracking_cfg: TrackingConfig):
+        use_cuda = bool(tracking_cfg.repo_deepsort_use_cuda and cv2.cuda.getCudaEnabledDeviceCount() > 0)
+        return DeepSort(
+            model_path=tracking_cfg.repo_deepsort_weights,
+            max_dist=tracking_cfg.deepsort_max_cosine_distance,
+            min_confidence=tracking_cfg.repo_deepsort_min_confidence,
+            max_iou_distance=tracking_cfg.deepsort_max_iou_distance,
+            max_age=tracking_cfg.track_buffer,
+            n_init=tracking_cfg.deepsort_n_init,
+            nn_budget=tracking_cfg.deepsort_nn_budget,
+            use_cuda=use_cuda,
+        )
+
+    def _update_tracks(
+        self,
+        det: sv.Detections,
+        frame: np.ndarray,
+    ) -> Tuple[List[Tuple[float, float, float, float]], List[int], List[float]]:
+        bboxes_xywh: List[List[float]] = []
+        for xyxy in det.xyxy:
+            x1, y1, x2, y2 = [float(v) for v in xyxy]
+            w = max(1.0, x2 - x1)
+            h = max(1.0, y2 - y1)
+            cx = x1 + (w * 0.5)
+            cy = y1 + (h * 0.5)
+            bboxes_xywh.append([cx, cy, w, h])
+
+        if not bboxes_xywh:
+            return [], [], []
+
+        confs = np.asarray(det.confidence, dtype=np.float32)
+        tracks = self.tracker.update(np.asarray(bboxes_xywh, dtype=np.float32), confs, frame)
+
+        if tracks is None or len(tracks) == 0:
+            return [], [], []
+
+        track_boxes: List[Tuple[float, float, float, float]] = []
+        track_ids: List[int] = []
+        for row in tracks:
+            x1, y1, x2, y2, track_id = row.tolist()
+            track_boxes.append((float(x1), float(y1), float(x2), float(y2)))
+            track_ids.append(int(track_id))
+
+        track_confs = self._estimate_track_confidences(track_boxes, det)
+        return track_boxes, track_ids, track_confs
+
+    def _estimate_track_confidences(
+        self,
+        track_boxes: List[Tuple[float, float, float, float]],
+        det: sv.Detections,
+    ) -> List[float]:
+        if len(det) == 0:
+            return [0.0] * len(track_boxes)
+
+        det_xyxy = np.asarray(det.xyxy, dtype=np.float32)
+        det_conf = np.asarray(det.confidence, dtype=np.float32)
+        confs: List[float] = []
+
+        for box in track_boxes:
+            tx1, ty1, tx2, ty2 = box
+            t_area = max(1.0, (tx2 - tx1) * (ty2 - ty1))
+            best_iou = 0.0
+            best_conf = 0.0
+            for i, d in enumerate(det_xyxy):
+                dx1, dy1, dx2, dy2 = d.tolist()
+                ix1 = max(tx1, dx1)
+                iy1 = max(ty1, dy1)
+                ix2 = min(tx2, dx2)
+                iy2 = min(ty2, dy2)
+                iw = max(0.0, ix2 - ix1)
+                ih = max(0.0, iy2 - iy1)
+                inter = iw * ih
+                d_area = max(1.0, (dx2 - dx1) * (dy2 - dy1))
+                union = max(1.0, t_area + d_area - inter)
+                iou = inter / union
+                if iou > best_iou:
+                    best_iou = iou
+                    best_conf = float(det_conf[i])
+            confs.append(best_conf)
+
+        return confs
+
     def has_person(self, frame: np.ndarray) -> bool:
         det = self._predict_person_detections(frame)
         if len(det) == 0 or det.confidence is None:
@@ -121,69 +163,24 @@ class PersonTracker:
         return bool(np.any(det.confidence >= self.confidence_threshold))
 
     def _predict_person_detections(self, frame: np.ndarray) -> sv.Detections:
-        source_frame = frame
-        scale_x = 1.0
-        scale_y = 1.0
-
-        if self.inference_scale < 1.0:
-            h, w = frame.shape[:2]
-            new_w = max(64, int(round(w * self.inference_scale)))
-            new_h = max(64, int(round(h * self.inference_scale)))
-            source_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-            scale_x = w / float(new_w)
-            scale_y = h / float(new_h)
-
-        result = self.model.predict(
-            source=source_frame,
-            conf=self.confidence_threshold,
-            iou=self.iou_threshold,
-            classes=[0],
-            imgsz=self.inference_imgsz,
-            half=self.inference_half,
-            max_det=self.max_detections,
-            verbose=False,
-        )[0]
-
-        det = sv.Detections.from_ultralytics(result)
-        if len(det) == 0:
-            return det
-
-        if scale_x != 1.0 or scale_y != 1.0:
-            det.xyxy[:, [0, 2]] *= scale_x
-            det.xyxy[:, [1, 3]] *= scale_y
-
-        return det
-
-    def _filter_person_detections(self, det: sv.Detections, frame: np.ndarray) -> sv.Detections:
-        if len(det) == 0:
-            return det
-
-        frame_h, frame_w = frame.shape[:2]
-        min_area = float(frame_w * frame_h) * self.min_box_area_ratio
-
-        xyxy = det.xyxy
-        widths = xyxy[:, 2] - xyxy[:, 0]
-        heights = xyxy[:, 3] - xyxy[:, 1]
-        areas = widths * heights
-        height_width_ratio = heights / np.maximum(widths, 1.0)
-        min_height = float(frame_h) * self.min_box_height_ratio
-
-        area_mask = areas >= min_area
-        height_mask = (heights >= min_height) & (height_width_ratio >= self.min_box_height_width_ratio)
-        if self.border_exclusion_px > 0:
-            b = float(self.border_exclusion_px)
-            border_mask = (
-                (xyxy[:, 0] > b)
-                & (xyxy[:, 1] > b)
-                & (xyxy[:, 2] < (frame_w - b))
-                & (xyxy[:, 3] < (frame_h - b))
-            )
-            keep_mask = area_mask & height_mask & border_mask
-        else:
-            keep_mask = area_mask & height_mask
-
-        return det[keep_mask]
-
+        model_input = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        try:
+            result = self.model(
+                model_input,
+                device=self.repo_device,
+                classes=0,
+                conf=self.confidence_threshold,
+                verbose=False,
+            )[0]
+        except Exception:
+            result = self.model(
+                model_input,
+                device="cpu",
+                classes=0,
+                conf=self.confidence_threshold,
+                verbose=False,
+            )[0]
+        return sv.Detections.from_ultralytics(result)
 
 def summarize_trajectories(events: List[PersonTrackEvent]) -> Dict[int, Dict[str, int]]:
     summary: Dict[int, Dict[str, int]] = {}

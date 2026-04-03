@@ -17,30 +17,24 @@ class StreamConfig(BaseModel):
     sample_fps: float = 5.0
     output_frames_dir: Path = Path("artifacts/frames")
     save_sampled_frames: bool = False
+    skip_until_person: bool = True
 
 
 class DetectionConfig(BaseModel):
-    model_name: str = "yolov8s.pt"
-    confidence_threshold: float = 0.45
-    iou_threshold: float = 0.5
-    min_box_area_ratio: float = 0.003
-    min_box_height_ratio: float = 0.12
-    min_box_height_width_ratio: float = 1.15
-    border_exclusion_px: int = 0
-    inference_scale: float = 0.85
-    inference_imgsz: int = 640
-    inference_half: bool = False
-    max_detections: int = 25
+    model_name: str = "yolov8n.pt"
+    confidence_threshold: float = 0.8
+    repo_device: str = "0"
 
 
 class TrackingConfig(BaseModel):
-    track_buffer: int = 80
-    match_threshold: float = 0.7
+    track_buffer: int = 70
     deepsort_n_init: int = 3
     deepsort_max_iou_distance: float = 0.7
-    deepsort_max_cosine_distance: float = 0.25
+    deepsort_max_cosine_distance: float = 0.2
     deepsort_nn_budget: int = 100
-    deepsort_embedder: str = "mobilenet"
+    repo_deepsort_weights: str = "deep_sort/deep/checkpoint/ckpt.t7"
+    repo_deepsort_use_cuda: bool = True
+    repo_deepsort_min_confidence: float = 0.3
 
 
 class ZoneConfig(BaseModel):

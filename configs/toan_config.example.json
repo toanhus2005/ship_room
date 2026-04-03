@@ -6,29 +6,23 @@
   "stream": {
     "sample_fps": 5.0,
     "output_frames_dir": "artifacts/frames",
-    "save_sampled_frames": false
+    "save_sampled_frames": false,
+    "skip_until_person": true
   },
   "detection": {
-    "model_name": "yolov8s.pt",
-    "confidence_threshold": 0.45,
-    "iou_threshold": 0.5,
-    "min_box_area_ratio": 0.003,
-    "min_box_height_ratio": 0.12,
-    "min_box_height_width_ratio": 1.15,
-    "border_exclusion_px": 3,
-    "inference_scale": 0.85,
-    "inference_imgsz": 640,
-    "inference_half": false,
-    "max_detections": 25
+    "model_name": "yolov8n.pt",
+    "confidence_threshold": 0.8,
+    "repo_device": "0"
   },
   "tracking": {
-    "track_buffer": 80,
-    "match_threshold": 0.7,
+    "track_buffer": 70,
     "deepsort_n_init": 3,
     "deepsort_max_iou_distance": 0.7,
-    "deepsort_max_cosine_distance": 0.25,
+    "deepsort_max_cosine_distance": 0.2,
     "deepsort_nn_budget": 100,
-    "deepsort_embedder": "mobilenet"
+    "repo_deepsort_weights": "deep_sort/deep/checkpoint/ckpt.t7",
+    "repo_deepsort_use_cuda": true,
+    "repo_deepsort_min_confidence": 0.3
   },
   "zone": {
     "package_zone_polygon": [[200, 150], [1100, 150], [1100, 650], [200, 650]]
