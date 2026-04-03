@@ -1,0 +1,209 @@
+BAO CAO CHI TIET DU AN: SHIP ROOM MONITORING (BAN DUNG 100% THEO MA NGUON HIEN TAI)
+Ngay cap nhat: 2026-04-03
+
+1) MUC TIEU DU AN
+Du an xay dung he thong xu ly video giam sat cho khu vuc dong goi theo pipeline tu dong:
+- Thu thap: Doc du lieu tu video file, camera index hoac RTSP.
+- Nhan dien: Phat hien person tren tung frame.
+- Theo doi: Gan Tracking ID de duy tri dau vet cua cung mot nguoi qua nhieu frame.
+- Kiem soat vung: Kiem tra nguoi co vao package_zone hay khong.
+- Du lieu va xem lai: Xuat su kien JSONL, tong hop timeline va web preview de skip/seek nhanh.
+
+2) CAU TRUC VA VAI TRO CAC MODULE
+ship-room-monitoring/
+|- README.md
+|- requirements.txt
+|- run_project.bat
+|- yolov8n.pt
+|- deep_sort/                               # DeepSORT duoc nhung truc tiep vao project
+|- artifacts/
+|  |- events/
+|  |  |- person_tracks.jsonl
+|  |  `- person_appearance_tour.json
+|  |- preview_frames/
+|  `- videos/
+|- configs/
+|  |- toan_config.sample1.json
+|  `- toan_config.example.json
+|- data/
+|- docs/
+|  `- project_module_description.txt
+`- src/
+   |- config.py
+   |- pipeline_toan.py
+   |- module1/
+   |  |- video_input.py
+   |  `- person_event_tour.py
+   `- module2/
+      |- person_tracker.py
+      `- live_preview_web.py
+
+Luu y dung voi hien tai:
+- He thong su dung YOLO + DeepSORT, KHONG su dung ByteTrack.
+- Trong so model chinh la yolov8n.pt.
+- DeepSORT weight dang dung: deep_sort/deep/checkpoint/ckpt.t7.
+
+2.1) src/config.py
+Su dung Pydantic de dinh nghia schema cau hinh va validate JSON.
+
+Cac model dang ton tai:
+- VideoSourceConfig: source, timezone.
+- StreamConfig: sample_fps, output_frames_dir, save_sampled_frames, skip_until_person.
+- DetectionConfig: model_name, confidence_threshold, repo_device.
+- TrackingConfig: track_buffer, deepsort_n_init, deepsort_max_iou_distance,
+  deepsort_max_cosine_distance, deepsort_nn_budget,
+  repo_deepsort_weights, repo_deepsort_use_cuda, repo_deepsort_min_confidence.
+- ZoneConfig: package_zone_polygon.
+- OutputConfig: events_jsonl.
+
+Ghi chu:
+- DetectionConfig hien tai KHONG co truong iou_threshold.
+- TrackingConfig hien tai KHONG co match_threshold.
+
+2.2) src/module1/video_input.py
+Nhiem vu:
+- Mo nguon video/camera.
+- Sample frame theo sample_fps de giam tai.
+- Dong bo timestamp UTC va local cho tung frame.
+
+Cong thuc sample dang dung:
+- native_fps = cap.get(CAP_PROP_FPS) hoac 25.0 neu loi.
+- step = max(1, round(native_fps / max(sample_fps, 0.1))).
+- Chi xu ly frame neu frame_index % step == 0.
+
+Dong bo thoi gian:
+- Uu tien CAP_PROP_POS_MSEC neu co.
+- Fallback frame_index/native_fps neu khong co pos_msec.
+
+2.3) src/module2/person_tracker.py
+Day la core detect + track + zone.
+
+Cong nghe dang dung:
+- Detect: Ultralytics YOLO (classes=0 de chi lay person).
+- Track: DeepSort trong deep_sort/deep_sort.py.
+- Zone trigger: supervision.PolygonZone.
+
+Luong xu ly:
+- Predict detection tren frame.
+- Loc class person.
+- Chuyen bbox xyxy -> xywh-center de dua vao DeepSORT update().
+- Nhan ket qua track [x1, y1, x2, y2, track_id].
+- Uoc luong confidence cua track bang IoU best-match voi detection box.
+- Kiem tra in_package_zone va tao PersonTrackEvent.
+
+Ham bo tro:
+- has_person(frame): check nhanh frame co person hay khong (phuc vu skip_until_person).
+- summarize_trajectories(events): tong hop first_frame, last_frame, zone_hits theo track_id.
+
+2.4) src/pipeline_toan.py
+Vai tro: orchestrator cho che do batch offline.
+
+Luong chinh:
+- Doc va validate config.
+- Tao PersonTracker.
+- Duyet iter_sampled_frames.
+- Neu skip_until_person=true thi bo qua den khi has_person(frame)=true.
+- process_frame -> ghi JSONL theo tung event.
+
+Moi dong JSONL gom:
+- frame_index, track_id, xyxy, confidence, in_package_zone
+- timestamp_utc, timestamp_local, elapsed_seconds
+
+2.5) src/module1/person_event_tour.py
+Nhiem vu:
+- Tong hop timeline xuat hien theo track_id.
+- Ho tro xem nhanh su kien.
+
+Trong run_project.bat, module nay duoc goi voi --tracks-jsonl de tao:
+- artifacts/events/person_appearance_tour.json
+
+Noi dung tong hop:
+- first_frame/last_frame
+- first_second/last_second/duration_second
+- first/last timestamp UTC + local
+- detections, zone_hits, max_confidence
+
+2.6) src/module2/live_preview_web.py
+Nhiem vu:
+- Chay Flask server va stream MJPEG.
+- Ve bbox + ID + confidence.
+- Ho tro dieu khien: pause, seek +/-, seek den moc cu the, skip-next-person.
+
+Co che skip-next-person:
+- Quet theo scan_stride xap xi 1 giay/frame.
+- Tim frame tiep theo co person, nhay den frame do.
+- Tao lai tracker sau seek/skip de dong bo trang thai.
+
+FPS display:
+- inst_fps = 1/dt.
+- Lam muot EMA de tranh nhay so qua manh.
+
+2.7) run_project.bat
+Script 1 cham tren Windows:
+- Tao/activate .venv.
+- Cai dependency tu requirements.txt.
+- Chay pipeline_toan.
+- Trich source/model tu config.
+- Chay person_event_tour.
+- Start live_preview_web va mo http://127.0.0.1:8787.
+
+3) GIA TRI COT LOI KIEN TRUC
+- Module hoa ro rang: Input -> Tracking core -> Batch export -> Web preview.
+- Toi uu tai nguyen: sample_fps + skip_until_person.
+- Dung cho ca ky thuat va nghiep vu:
+  + JSONL de analytics.
+  + Timeline + web de soat su kien nhanh.
+
+4) HAN CHE VA HUONG CAI THIEN
+Han che:
+- Sau seek/skip, tracker reset nen ID co the khong lien tuc truoc/sau diem nhay.
+- Do chinh xac detect phu thuoc camera, anh sang, goc chup, occlusion.
+- MJPEG ton bang thong hon WebRTC.
+
+Huong cai thien:
+- Coarse-to-fine skip: quet tho roi quet tinh de tim frame bat dau chinh xac hon.
+- Xuat video highlights tu cac khoang co zone_hits.
+- Dashboard thong ke theo gio/ca, so nguoi, tan suat vao zone.
+- Tang toc suy luan voi ONNX/TensorRT/GPU scheduling khi scale nhieu camera.
+
+5) PHAN TICH LUA CHON CONG NGHE (TECH STACK RATIONALE)
+
+5.1) YOLO cho person detection
+Ly do chon:
+- Nhanh va de trien khai cho bai toan giam sat thoi gian thuc.
+- He sinh thai Ultralytics de dung, de tune, de maintain.
+
+So sanh tong quat:
+- So voi Faster R-CNN: Faster R-CNN thuong cham hon cho realtime.
+- So voi SSD: YOLO doi moi (v8) thuong can bang tot hon giua toc do va do chinh xac.
+
+5.2) DeepSORT cho tracking
+Ly do chon:
+- On dinh ID tot hon cac tracker chi dua vao motion trong bai toan co che khuat.
+- Ket hop motion + appearance embedding.
+
+So sanh tong quat:
+- So voi SORT: SORT nhanh nhung de mat ID khi occlusion.
+- So voi ByteTrack: ByteTrack nhanh va manh, nhung phien ban hien tai du an KHONG su dung ByteTrack.
+
+Ghi chu dung voi code hien tai:
+- DeepSORT trong du an la package local deep_sort, extractor dung model custom trong deep_sort/deep/model.py.
+
+5.3) Pydantic cho config
+Ly do chon:
+- Validate schema dau vao ngay khi khoi dong.
+- Tranh loi runtime do sai kieu/thiieu field.
+- Tach config khoi logic code.
+
+5.4) Flask + MJPEG cho web preview
+Ly do chon:
+- Nhe, de trien khai, phu hop cho web giamsat noi bo.
+- Khong can ha tang phuc tap nhu STUN/TURN.
+
+Trade-off:
+- Trien khai nhanh hon WebRTC, nhung ton bang thong cao hon.
+
+KET LUAN
+Phien ban hien tai da on dinh cho luong:
+Video/Cam -> Detect Person (YOLO) -> Track ID (DeepSORT) -> Zone Check -> JSONL + Timeline + Web Preview.
+Bao cao nay da duoc canh chinh de khop 100% voi ma nguon dang co trong workspace.
