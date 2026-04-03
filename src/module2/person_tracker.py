@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple
 import cv2
 import numpy as np
 import supervision as sv
+from deep_sort_realtime.deepsort_tracker import DeepSort
 from ultralytics import YOLO
 
 from src.config import DetectionConfig, TrackingConfig, ZoneConfig
@@ -31,16 +32,22 @@ class PersonTracker:
         self.confidence_threshold = detection_cfg.confidence_threshold
         self.iou_threshold = detection_cfg.iou_threshold
         self.min_box_area_ratio = detection_cfg.min_box_area_ratio
+        self.min_box_height_ratio = detection_cfg.min_box_height_ratio
+        self.min_box_height_width_ratio = detection_cfg.min_box_height_width_ratio
         self.border_exclusion_px = detection_cfg.border_exclusion_px
         self.inference_scale = max(0.25, min(1.0, detection_cfg.inference_scale))
         self.inference_imgsz = detection_cfg.inference_imgsz
         self.inference_half = detection_cfg.inference_half
         self.max_detections = detection_cfg.max_detections
 
-        self.tracker = sv.ByteTrack(
-            track_activation_threshold=self.confidence_threshold,
-            lost_track_buffer=tracking_cfg.track_buffer,
-            minimum_matching_threshold=tracking_cfg.match_threshold,
+        self.tracker = DeepSort(
+            max_age=tracking_cfg.track_buffer,
+            n_init=tracking_cfg.deepsort_n_init,
+            max_iou_distance=tracking_cfg.deepsort_max_iou_distance,
+            max_cosine_distance=tracking_cfg.deepsort_max_cosine_distance,
+            nn_budget=tracking_cfg.deepsort_nn_budget,
+            embedder=tracking_cfg.deepsort_embedder,
+            polygon=False,
         )
 
         polygon = np.array(zone_cfg.package_zone_polygon, dtype=np.int32)
@@ -58,17 +65,48 @@ class PersonTracker:
         if len(det) == 0:
             return []
 
-        tracked = self.tracker.update_with_detections(det)
+        ds_detections: List[Tuple[List[float], float, str]] = []
+        for xyxy, conf in zip(det.xyxy, det.confidence):
+            left = float(xyxy[0])
+            top = float(xyxy[1])
+            width = float(xyxy[2] - xyxy[0])
+            height = float(xyxy[3] - xyxy[1])
+            ds_detections.append(([left, top, width, height], float(conf), "person"))
+
+        tracks = self.tracker.update_tracks(ds_detections, frame=frame)
+
+        track_boxes: List[Tuple[float, float, float, float]] = []
+        track_confs: List[float] = []
+        track_ids: List[int] = []
+
+        for track in tracks:
+            if not track.is_confirmed() or track.time_since_update > 0:
+                continue
+
+            ltrb = track.to_ltrb()
+            track_boxes.append(
+                (float(ltrb[0]), float(ltrb[1]), float(ltrb[2]), float(ltrb[3]))
+            )
+            track_ids.append(int(track.track_id))
+            track_confs.append(float(getattr(track, "det_conf", 0.0) or 0.0))
+
+        if not track_boxes:
+            return []
+
+        tracked = sv.Detections(
+            xyxy=np.array(track_boxes, dtype=np.float32),
+            confidence=np.array(track_confs, dtype=np.float32),
+            class_id=np.zeros(len(track_boxes), dtype=np.int32),
+        )
         inside_zone_mask = self.zone.trigger(detections=tracked)
 
         events: List[PersonTrackEvent] = []
-        for i, (xyxy, conf) in enumerate(zip(tracked.xyxy, tracked.confidence)):
-            tid = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else -1
+        for i, (xyxy, conf) in enumerate(zip(track_boxes, track_confs)):
             box = (float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3]))
             events.append(
                 PersonTrackEvent(
                     frame_index=frame_index,
-                    track_id=tid,
+                    track_id=track_ids[i],
                     xyxy=box,
                     confidence=float(conf),
                     in_package_zone=bool(inside_zone_mask[i]),
@@ -127,8 +165,11 @@ class PersonTracker:
         widths = xyxy[:, 2] - xyxy[:, 0]
         heights = xyxy[:, 3] - xyxy[:, 1]
         areas = widths * heights
+        height_width_ratio = heights / np.maximum(widths, 1.0)
+        min_height = float(frame_h) * self.min_box_height_ratio
 
         area_mask = areas >= min_area
+        height_mask = (heights >= min_height) & (height_width_ratio >= self.min_box_height_width_ratio)
         if self.border_exclusion_px > 0:
             b = float(self.border_exclusion_px)
             border_mask = (
@@ -137,9 +178,9 @@ class PersonTracker:
                 & (xyxy[:, 2] < (frame_w - b))
                 & (xyxy[:, 3] < (frame_h - b))
             )
-            keep_mask = area_mask & border_mask
+            keep_mask = area_mask & height_mask & border_mask
         else:
-            keep_mask = area_mask
+            keep_mask = area_mask & height_mask
 
         return det[keep_mask]
 
