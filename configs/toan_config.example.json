@@ -15,10 +15,10 @@
     "repo_device": "0"
   },
   "tracking": {
-    "track_buffer": 70,
-    "deepsort_n_init": 3,
+    "track_buffer": 200,
+    "deepsort_n_init": 1,
     "deepsort_max_iou_distance": 0.7,
-    "deepsort_max_cosine_distance": 0.2,
+    "deepsort_max_cosine_distance": 0.45,
     "deepsort_nn_budget": 100,
     "repo_deepsort_weights": "deep_sort/deep/checkpoint/ckpt.t7",
     "repo_deepsort_use_cuda": true,

@@ -32,6 +32,9 @@ class PersonTracker:
         self.confidence_threshold = detection_cfg.confidence_threshold
         self.repo_device = detection_cfg.repo_device
         self.deepsort_min_confidence = tracking_cfg.repo_deepsort_min_confidence
+        self.single_person_mode = bool(tracking_cfg.single_person_mode)
+        self._stable_track_id = 1
+        self._stable_box: Tuple[float, float, float, float] | None = None
 
         self.tracker = self._build_tracker(tracking_cfg)
 
@@ -53,6 +56,29 @@ class PersonTracker:
         if not track_boxes:
             return []
 
+        if self.single_person_mode:
+            chosen_index = self._choose_single_person_track(track_boxes, track_confs)
+            chosen_box = track_boxes[chosen_index]
+            chosen_conf = track_confs[chosen_index]
+            self._stable_box = chosen_box
+            return [
+                PersonTrackEvent(
+                    frame_index=frame_index,
+                    track_id=self._stable_track_id,
+                    xyxy=(float(chosen_box[0]), float(chosen_box[1]), float(chosen_box[2]), float(chosen_box[3])),
+                    confidence=float(chosen_conf),
+                    in_package_zone=bool(
+                        self.zone.trigger(
+                            detections=sv.Detections(
+                                xyxy=np.array([chosen_box], dtype=np.float32),
+                                confidence=np.array([chosen_conf], dtype=np.float32),
+                                class_id=np.array([0], dtype=np.int32),
+                            )
+                        )[0]
+                    ),
+                )
+            ]
+
         tracked = sv.Detections(
             xyxy=np.array(track_boxes, dtype=np.float32),
             confidence=np.array(track_confs, dtype=np.float32),
@@ -73,6 +99,42 @@ class PersonTracker:
                 )
             )
         return events
+
+    def _choose_single_person_track(
+        self,
+        track_boxes: List[Tuple[float, float, float, float]],
+        track_confs: List[float],
+    ) -> int:
+        if not track_boxes:
+            return 0
+
+        if self._stable_box is None:
+            return int(max(range(len(track_boxes)), key=lambda i: track_confs[i]))
+
+        best_index = 0
+        best_score = -1.0
+        prev_box = self._stable_box
+        px1, py1, px2, py2 = prev_box
+        prev_area = max(1.0, (px2 - px1) * (py2 - py1))
+
+        for index, box in enumerate(track_boxes):
+            x1, y1, x2, y2 = box
+            inter_x1 = max(px1, x1)
+            inter_y1 = max(py1, y1)
+            inter_x2 = min(px2, x2)
+            inter_y2 = min(py2, y2)
+            inter_w = max(0.0, inter_x2 - inter_x1)
+            inter_h = max(0.0, inter_y2 - inter_y1)
+            inter_area = inter_w * inter_h
+            box_area = max(1.0, (x2 - x1) * (y2 - y1))
+            union = max(1.0, prev_area + box_area - inter_area)
+            iou = inter_area / union
+            score = (iou * 2.0) + float(track_confs[index])
+            if score > best_score:
+                best_score = score
+                best_index = index
+
+        return best_index
 
     def _build_tracker(self, tracking_cfg: TrackingConfig):
         use_cuda = bool(tracking_cfg.repo_deepsort_use_cuda and cv2.cuda.getCudaEnabledDeviceCount() > 0)

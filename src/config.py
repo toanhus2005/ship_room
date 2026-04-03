@@ -27,14 +27,15 @@ class DetectionConfig(BaseModel):
 
 
 class TrackingConfig(BaseModel):
-    track_buffer: int = 70
-    deepsort_n_init: int = 3
+    track_buffer: int = 200
+    deepsort_n_init: int = 1
     deepsort_max_iou_distance: float = 0.7
-    deepsort_max_cosine_distance: float = 0.2
+    deepsort_max_cosine_distance: float = 0.45
     deepsort_nn_budget: int = 100
     repo_deepsort_weights: str = "deep_sort/deep/checkpoint/ckpt.t7"
     repo_deepsort_use_cuda: bool = True
     repo_deepsort_min_confidence: float = 0.3
+    single_person_mode: bool = False
 
 
 class ZoneConfig(BaseModel):
