@@ -6,6 +6,7 @@ import time
 from typing import Generator
 
 import cv2
+import numpy as np
 from flask import Flask, Response, jsonify, request
 
 from src.config import DetectionConfig, TrackingConfig, ZoneConfig
@@ -154,6 +155,10 @@ def build_app(
                     fps_color = (0, 255, 0)
 
                 view = frame
+
+                # Draw package zone border (yellow) for visual reference.
+                zone_polygon = np.array(zone_points, dtype=np.int32).reshape((-1, 1, 2))
+                cv2.polylines(view, [zone_polygon], isClosed=True, color=(0, 255, 255), thickness=2)
 
                 for e in events:
                     x1, y1, x2, y2 = map(int, e.xyxy)
@@ -406,7 +411,7 @@ def main() -> None:
     parser.add_argument("--video", type=str, required=True, help="Input video path")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host")
     parser.add_argument("--port", type=int, default=8787, help="Port")
-    parser.add_argument("--model", type=str, default="yolov8n.pt", help="YOLO model")
+    parser.add_argument("--model", type=str, default="yolov8m.pt", help="YOLO model")
     parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument(

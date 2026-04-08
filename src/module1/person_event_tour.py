@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 
@@ -41,30 +43,56 @@ class PersonTrackAppearanceEvent:
 
 
 class PersonEventTour:
-    def __init__(self, model_name: str = "yolov8n.pt", confidence: float = 0.35) -> None:
+    PERSON_CLASS_ID = 0  # COCO class 0 = person
+
+    def __init__(
+        self,
+        model_name: str = "yolov8m.pt",
+        confidence: float = 0.35,
+        iou: float = 0.5,
+        batch_size: int = 8,
+        device: str = "auto",
+    ) -> None:
         self.model = YOLO(model_name)
         self.confidence = confidence
+        self.iou = iou
+        self.batch_size = max(1, int(batch_size))
+        self.device = self._resolve_device(device)
+        self.use_half = bool(self.device != "cpu")
+
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        req = str(device).strip().lower()
+        if req in {"", "auto"}:
+            return "0" if torch.cuda.is_available() else "cpu"
+        return req
 
     def _detect_person(self, frame: np.ndarray) -> Tuple[bool, float]:
-        result = self.model.predict(
-            source=frame,
+        return self._detect_person_batch([frame])[0]
+
+    def _detect_person_batch(self, frames: List[np.ndarray]) -> List[Tuple[bool, float]]:
+        if not frames:
+            return []
+
+        results = self.model.predict(
+            source=frames,
             conf=self.confidence,
-            classes=[0],
+            iou=self.iou,
+            classes=[self.PERSON_CLASS_ID],
+            device=self.device,
+            half=self.use_half,
             verbose=False,
-        )[0]
+        )
 
-        boxes = result.boxes
-        if boxes is None or boxes.cls is None or boxes.conf is None:
-            return False, 0.0
-
-        cls = boxes.cls.cpu().numpy()
-        conf = boxes.conf.cpu().numpy()
-
-        person_conf = conf[cls == 0]  # COCO class 0 = person
-        if person_conf.size == 0:
-            return False, 0.0
-
-        return True, float(np.max(person_conf))
+        out: List[Tuple[bool, float]] = []
+        for result in results:
+            boxes = result.boxes
+            if boxes is None or boxes.conf is None or len(boxes) == 0:
+                out.append((False, 0.0))
+                continue
+            max_conf = float(boxes.conf.max().item())
+            out.append((True, max_conf))
+        return out
 
     def scan(
         self,
@@ -77,85 +105,122 @@ class PersonEventTour:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
 
-        native_fps = cap.get(cv2.CAP_PROP_FPS)
-        if native_fps <= 0:
-            native_fps = 25.0
+        try:
+            native_fps = cap.get(cv2.CAP_PROP_FPS)
+            if native_fps <= 0:
+                native_fps = 25.0
 
-        stride = max(1, int(round(native_fps / max(scan_fps, 0.1))))
+            stride = max(1, int(round(native_fps / max(scan_fps, 0.1))))
+            absent_frames_limit = max(1, int(math.ceil(absence_tolerance_sec * scan_fps)))
 
-        events: List[PersonAppearanceEvent] = []
+            events: List[PersonAppearanceEvent] = []
 
-        open_start_frame: Optional[int] = None
-        open_start_sec: Optional[float] = None
-        last_seen_frame: Optional[int] = None
-        last_seen_sec: Optional[float] = None
-        open_max_conf = 0.0
-        open_detections = 0
+            open_start_frame: Optional[int] = None
+            open_start_sec: Optional[float] = None
+            last_seen_frame: Optional[int] = None
+            last_seen_sec: Optional[float] = None
+            open_max_conf = 0.0
+            open_detections = 0
+            absent_samples = 0
 
-        frame_index = 0
-        while True:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-            ok, frame = cap.read()
-            if not ok:
-                break
+            batch_frames: List[np.ndarray] = []
+            batch_meta: List[Tuple[int, float]] = []
 
-            t_sec = frame_index / native_fps
-            has_person, best_conf = self._detect_person(frame)
+            frame_index = 0
 
-            if has_person:
-                if open_start_frame is None:
-                    open_start_frame = frame_index
-                    open_start_sec = t_sec
-                    open_max_conf = best_conf
-                    open_detections = 1
-                else:
-                    open_max_conf = max(open_max_conf, best_conf)
-                    open_detections += 1
+            def finalize_open_event() -> None:
+                nonlocal open_start_frame
+                nonlocal open_start_sec
+                nonlocal last_seen_frame
+                nonlocal last_seen_sec
+                nonlocal open_max_conf
+                nonlocal open_detections
+                nonlocal absent_samples
 
-                last_seen_frame = frame_index
-                last_seen_sec = t_sec
-            elif open_start_frame is not None and last_seen_sec is not None:
-                if (t_sec - last_seen_sec) >= absence_tolerance_sec:
-                    duration = last_seen_sec - float(open_start_sec)
-                    if duration >= min_event_sec:
-                        events.append(
-                            PersonAppearanceEvent(
-                                start_frame=open_start_frame,
-                                end_frame=int(last_seen_frame),
-                                start_second=float(open_start_sec),
-                                end_second=float(last_seen_sec),
-                                duration_second=float(duration),
-                                max_confidence=float(open_max_conf),
-                                detections=int(open_detections),
-                            )
+                if (
+                    open_start_frame is None
+                    or open_start_sec is None
+                    or last_seen_frame is None
+                    or last_seen_sec is None
+                ):
+                    return
+
+                duration = last_seen_sec - open_start_sec
+                if duration >= min_event_sec:
+                    events.append(
+                        PersonAppearanceEvent(
+                            start_frame=open_start_frame,
+                            end_frame=int(last_seen_frame),
+                            start_second=float(open_start_sec),
+                            end_second=float(last_seen_sec),
+                            duration_second=float(duration),
+                            max_confidence=float(open_max_conf),
+                            detections=int(open_detections),
                         )
-
-                    open_start_frame = None
-                    open_start_sec = None
-                    last_seen_frame = None
-                    last_seen_sec = None
-                    open_max_conf = 0.0
-                    open_detections = 0
-
-            frame_index += stride
-
-        if open_start_frame is not None and last_seen_sec is not None and open_start_sec is not None:
-            duration = last_seen_sec - open_start_sec
-            if duration >= min_event_sec:
-                events.append(
-                    PersonAppearanceEvent(
-                        start_frame=open_start_frame,
-                        end_frame=int(last_seen_frame),
-                        start_second=float(open_start_sec),
-                        end_second=float(last_seen_sec),
-                        duration_second=float(duration),
-                        max_confidence=float(open_max_conf),
-                        detections=int(open_detections),
                     )
-                )
 
-        cap.release()
-        return events
+                open_start_frame = None
+                open_start_sec = None
+                last_seen_frame = None
+                last_seen_sec = None
+                open_max_conf = 0.0
+                open_detections = 0
+                absent_samples = 0
+
+            def process_batch() -> None:
+                nonlocal open_start_frame
+                nonlocal open_start_sec
+                nonlocal last_seen_frame
+                nonlocal last_seen_sec
+                nonlocal open_max_conf
+                nonlocal open_detections
+                nonlocal absent_samples
+
+                if not batch_frames:
+                    return
+
+                batch_results = self._detect_person_batch(batch_frames)
+                for (sample_frame_index, t_sec), (has_person, best_conf) in zip(batch_meta, batch_results):
+                    if has_person:
+                        absent_samples = 0
+                        if open_start_frame is None:
+                            open_start_frame = sample_frame_index
+                            open_start_sec = t_sec
+                            open_max_conf = best_conf
+                            open_detections = 1
+                        else:
+                            open_max_conf = max(open_max_conf, best_conf)
+                            open_detections += 1
+
+                        last_seen_frame = sample_frame_index
+                        last_seen_sec = t_sec
+                    elif open_start_frame is not None:
+                        absent_samples += 1
+                        if absent_samples >= absent_frames_limit:
+                            finalize_open_event()
+
+                batch_frames.clear()
+                batch_meta.clear()
+
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+
+                if frame_index % stride == 0:
+                    t_sec = frame_index / native_fps
+                    batch_frames.append(frame)
+                    batch_meta.append((frame_index, t_sec))
+                    if len(batch_frames) >= self.batch_size:
+                        process_batch()
+
+                frame_index += 1
+
+            process_batch()
+            finalize_open_event()
+            return events
+        finally:
+            cap.release()
 
 
 def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppearanceEvent]:
@@ -246,8 +311,16 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fast tour to moments where a person appears")
     parser.add_argument("--video", type=str, required=True, help="Path to input video")
-    parser.add_argument("--model", type=str, default="yolov8n.pt", help="YOLO model")
+    parser.add_argument("--model", type=str, default="yolov8m.pt", help="YOLO model")
     parser.add_argument("--conf", type=float, default=0.35, help="Person confidence threshold")
+    parser.add_argument("--iou", type=float, default=0.5, help="NMS IoU threshold")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for YOLO inference")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Inference device: auto, cpu, 0, 0,1...",
+    )
     parser.add_argument("--scan-fps", type=float, default=2.0, help="Sampling fps for scan")
     parser.add_argument(
         "--absence-tolerance",
@@ -311,7 +384,13 @@ def main() -> None:
         print(f"Saved: {out_path}")
         return
 
-    tour = PersonEventTour(model_name=args.model, confidence=args.conf)
+    tour = PersonEventTour(
+        model_name=args.model,
+        confidence=args.conf,
+        iou=args.iou,
+        batch_size=args.batch_size,
+        device=args.device,
+    )
     events = tour.scan(
         video_path=args.video,
         scan_fps=args.scan_fps,

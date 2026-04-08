@@ -18,4 +18,9 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+yolov8m.pt
 yolov8n.pt
+
+# Local heavy data (do not push)
+data/IMG_5812.MOV
+data/sample3.mp4

@@ -14,7 +14,7 @@ ship-room-monitoring/
 |- README.md
 |- requirements.txt
 |- run_project.bat
-|- yolov8n.pt
+|- yolov8m.pt
 |- deep_sort/                               # DeepSORT duoc nhung truc tiep vao project
 |- artifacts/
 |  |- events/
@@ -40,7 +40,7 @@ ship-room-monitoring/
 
 Luu y dung voi hien tai:
 - He thong su dung YOLO + DeepSORT, KHONG su dung ByteTrack.
-- Trong so model chinh la yolov8n.pt.
+- Trong so model chinh la yolov8m.pt.
 - DeepSORT weight dang dung: deep_sort/deep/checkpoint/ckpt.t7.
 
 2.1) src/config.py
@@ -48,7 +48,7 @@ Su dung Pydantic de dinh nghia schema cau hinh va validate JSON.
 
 Cac model dang ton tai:
 - VideoSourceConfig: source, timezone.
-- StreamConfig: sample_fps, output_frames_dir, save_sampled_frames, skip_until_person.
+- StreamConfig: sample_fps, output_frames_dir, save_sampled_frames.
 - DetectionConfig: model_name, confidence_threshold, repo_device.
 - TrackingConfig: track_buffer, deepsort_n_init, deepsort_max_iou_distance,
   deepsort_max_cosine_distance, deepsort_nn_budget,
@@ -92,7 +92,7 @@ Luong xu ly:
 - Kiem tra in_package_zone va tao PersonTrackEvent.
 
 Ham bo tro:
-- has_person(frame): check nhanh frame co person hay khong (phuc vu skip_until_person).
+- has_person(frame): check nhanh frame co person hay khong (phuc vu tinh nang skip-next-person tren web preview).
 - summarize_trajectories(events): tong hop first_frame, last_frame, zone_hits theo track_id.
 
 2.4) src/pipeline_toan.py
@@ -102,7 +102,6 @@ Luong chinh:
 - Doc va validate config.
 - Tao PersonTracker.
 - Duyet iter_sampled_frames.
-- Neu skip_until_person=true thi bo qua den khi has_person(frame)=true.
 - process_frame -> ghi JSONL theo tung event.
 
 Moi dong JSONL gom:
@@ -149,7 +148,7 @@ Script 1 cham tren Windows:
 
 3) GIA TRI COT LOI KIEN TRUC
 - Module hoa ro rang: Input -> Tracking core -> Batch export -> Web preview.
-- Toi uu tai nguyen: sample_fps + skip_until_person.
+- Toi uu tai nguyen: sample_fps.
 - Dung cho ca ky thuat va nghiep vu:
   + JSONL de analytics.
   + Timeline + web de soat su kien nhanh.

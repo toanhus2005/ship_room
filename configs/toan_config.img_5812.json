@@ -1,6 +1,6 @@
 {
     "video": {
-        "source": "data/sample2.mp4",
+        "source": "data/IMG_5812.MOV",
         "timezone": "Asia/Ho_Chi_Minh"
     },
     "stream": {
@@ -14,18 +14,17 @@
         "repo_device": "0"
     },
     "tracking": {
-        "track_buffer": 300,
-        "deepsort_n_init": 1,
-        "deepsort_max_iou_distance": 0.95,
-        "deepsort_max_cosine_distance": 0.7,
+        "track_buffer": 200,
+        "deepsort_n_init": 3,
+        "deepsort_max_iou_distance": 0.7,
+        "deepsort_max_cosine_distance": 0.45,
         "deepsort_nn_budget": 100,
         "repo_deepsort_weights": "deep_sort/deep/checkpoint/ckpt.t7",
         "repo_deepsort_use_cuda": true,
-        "repo_deepsort_min_confidence": 0.05,
-        "single_person_mode": true
+        "repo_deepsort_min_confidence": 0.3
     },
     "zone": {
-        "package_zone_polygon": [[425, 275], [875, 275], [875, 525], [425, 525]]
+        "package_zone_polygon": [[1060, 520], [1480, 520], [1480, 860], [1060, 860]]
     },
     "output": {
         "events_jsonl": "artifacts/events/person_tracks.jsonl"

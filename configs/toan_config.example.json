@@ -4,13 +4,12 @@
     "timezone": "Asia/Ho_Chi_Minh"
   },
   "stream": {
-    "sample_fps": 5.0,
+    "sample_fps": 10.0,
     "output_frames_dir": "artifacts/frames",
-    "save_sampled_frames": false,
-    "skip_until_person": true
+    "save_sampled_frames": false
   },
   "detection": {
-    "model_name": "yolov8n.pt",
+    "model_name": "yolov8m.pt",
     "confidence_threshold": 0.8,
     "repo_device": "0"
   },

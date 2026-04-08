@@ -11,9 +11,8 @@ Pipeline detect va track nguoi trong phong kho, su dung YOLOv8 + DeepSORT.
 - `src/module2/live_preview_web.py`: live preview web.
 
 ## Tinh nang dang dung
-- Detect/track theo stack tu repo tham chieu (YOLOv8n + DeepSORT).
+- Detect/track theo stack tu repo tham chieu (YOLOv8m + DeepSORT).
 - Luu timestamp UTC/local va elapsed_seconds cho tung event.
-- Ho tro `skip_until_person=true`: bo qua frame cho den khi phat hien nguoi dau tien moi bat dau tracking.
 
 ## Cai dat
 1. Python 3.10+.
@@ -22,16 +21,18 @@ Pipeline detect va track nguoi trong phong kho, su dung YOLOv8 + DeepSORT.
 
 ## Chay nhanh
 - Pipeline:
-  - `python -m src.pipeline_toan --config configs/toan_config.sample1.json`
+  - `python -m src.pipeline_toan --video data/sample2.mp4`
+  - Hoac van co the dung file json: `python -m src.pipeline_toan --config configs/toan_config.sample1.json`
 - Chay full (pipeline + export timeline + live preview):
-  - `run_project.bat`
+  - `run_project`
+- Mac dinh script se uu tien GPU (`CUDA_VISIBLE_DEVICES=0`). Neu muon CPU, dat `detection.repo_device` thanh `cpu` trong file config.
 
 ## Cau hinh chinh
-- File mau: `configs/toan_config.sample1.json`
-- Model: `yolov8n.pt`
+- Shared default config dat trong `src/config.py` (ap dung chung cho moi video)
+- Co the override nhanh bang CLI: `--video`, `--timezone`
+- File mau (tuy chon): `configs/toan_config.sample1.json`
+- Model: `yolov8m.pt`
 - DeepSORT weights: `deep_sort/deep/checkpoint/ckpt.t7`
-- Skip den khi co nguoi:
-  - `stream.skip_until_person: true`
 
 ## Output
 - Event track: `artifacts/events/person_tracks.jsonl`

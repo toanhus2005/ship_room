@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 if "%~1"=="" (
-    set "CONFIG=configs\toan_config.sample1.json"
+    set "CONFIG=configs\toan_config.sample3.json"
 ) else (
     set "CONFIG=%~1"
 )
@@ -27,6 +27,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "CUDA_VISIBLE_DEVICES=0"
+echo [INFO] GPU mode enabled (CUDA_VISIBLE_DEVICES=%CUDA_VISIBLE_DEVICES%)
+for /f "usebackq delims=" %%G in (`python -c "import torch; print('True' if torch.cuda.is_available() else 'False')"`) do set "CUDA_OK=%%G"
+if /I not "%CUDA_OK%"=="True" (
+    echo [WARN] CUDA is not available in this .venv. The pipeline may run on CPU.
+) else (
+    echo [INFO] CUDA is available in this .venv.
+)
+
 echo [INFO] Installing dependencies...
 python -m pip install --upgrade pip >nul
 python -m pip install -r requirements.txt
@@ -35,21 +44,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [INFO] Running pipeline with config: %CONFIG%
-python -m src.pipeline_toan --config "%CONFIG%"
-if errorlevel 1 (
-    echo [ERROR] Pipeline execution failed.
-    exit /b 1
-)
-
 for /f "usebackq delims=" %%S in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).video.source } catch { '' }"`) do set "VIDEO_SOURCE=%%S"
 if "%VIDEO_SOURCE%"=="" (
-    set "VIDEO_SOURCE=data/sample1.mp4"
+    set "VIDEO_SOURCE=data/sample3.mp4"
 )
 
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.model_name } catch { '' }"`) do set "MODEL_NAME=%%M"
 if "%MODEL_NAME%"=="" (
-    set "MODEL_NAME=yolov8n.pt"
+    set "MODEL_NAME=yolov8m.pt"
+)
+
+for /f "usebackq delims=" %%C in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.confidence_threshold } catch { '' }"`) do set "CONF_THRESHOLD=%%C"
+if "%CONF_THRESHOLD%"=="" (
+    set "CONF_THRESHOLD=0.35"
+)
+
+for /f "usebackq delims=" %%Z in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $p=((Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).zone.package_zone_polygon); ($p | ForEach-Object { $_[0]; $_[1] }) -join ' ' } catch { '' }"`) do set "ZONE_POINTS=%%Z"
+if "%ZONE_POINTS%"=="" (
+    set "ZONE_POINTS=200 150 1100 150 1100 650 200 650"
 )
 
 echo [INFO] Exporting person appearance timeline...
@@ -66,11 +78,18 @@ if errorlevel 1 (
 )
 
 echo [INFO] Starting live preview web server...
-start "Ship Room Live Preview" ".venv\Scripts\python.exe" -m src.module2.live_preview_web --video "%VIDEO_SOURCE%"
+start "Ship Room Live Preview" ".venv\Scripts\python.exe" -m src.module2.live_preview_web --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --conf "%CONF_THRESHOLD%" --zone %ZONE_POINTS%
 
 echo [INFO] Opening browser at http://127.0.0.1:8787
 timeout /t 2 >nul
 start "" "http://127.0.0.1:8787"
 
-echo [DONE] Pipeline completed. Live preview is running at http://127.0.0.1:8787
+echo [INFO] Running pipeline with config: %CONFIG%
+python -m src.pipeline_toan --config "%CONFIG%"
+if errorlevel 1 (
+    echo [ERROR] Pipeline execution failed.
+    exit /b 1
+)
+
+echo [DONE] Pipeline completed. Live preview was running during processing at http://127.0.0.1:8787
 endlocal

@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 class VideoSourceConfig(BaseModel):
     source: str = Field(
-        ..., description="RTSP URL, camera index (as string), or path to video file"
+        "data/sample2.mp4",
+        description="RTSP URL, camera index (as string), or path to video file",
     )
     timezone: str = "Asia/Ho_Chi_Minh"
 
@@ -17,18 +18,17 @@ class StreamConfig(BaseModel):
     sample_fps: float = 5.0
     output_frames_dir: Path = Path("artifacts/frames")
     save_sampled_frames: bool = False
-    skip_until_person: bool = True
 
 
 class DetectionConfig(BaseModel):
-    model_name: str = "yolov8n.pt"
-    confidence_threshold: float = 0.8
+    model_name: str = "yolov8m.pt"
+    confidence_threshold: float = 0.3
     repo_device: str = "0"
 
 
 class TrackingConfig(BaseModel):
-    track_buffer: int = 200
-    deepsort_n_init: int = 1
+    track_buffer: int = 150
+    deepsort_n_init: int = 3
     deepsort_max_iou_distance: float = 0.7
     deepsort_max_cosine_distance: float = 0.45
     deepsort_nn_budget: int = 100
@@ -53,12 +53,21 @@ class OutputConfig(BaseModel):
 
 
 class ToanConfig(BaseModel):
-    video: VideoSourceConfig
+    video: VideoSourceConfig = VideoSourceConfig()
     stream: StreamConfig = StreamConfig()
     detection: DetectionConfig = DetectionConfig()
     tracking: TrackingConfig = TrackingConfig()
     zone: ZoneConfig = ZoneConfig()
     output: OutputConfig = OutputConfig()
+
+
+def build_shared_config(video_source: str | None = None, timezone: str | None = None) -> ToanConfig:
+    cfg = ToanConfig()
+    if video_source:
+        cfg.video.source = video_source
+    if timezone:
+        cfg.video.timezone = timezone
+    return cfg
 
 
 def ensure_parent(path: Path) -> None:
