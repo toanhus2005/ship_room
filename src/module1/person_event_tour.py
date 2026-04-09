@@ -28,6 +28,7 @@ class PersonAppearanceEvent:
 @dataclass
 class PersonTrackAppearanceEvent:
     track_id: int
+    segment_index: int
     first_frame: int
     last_frame: int
     first_second: float
@@ -227,7 +228,30 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
     if not tracks_jsonl.exists():
         raise FileNotFoundError(f"Tracking file not found: {tracks_jsonl}")
 
-    grouped: Dict[int, Dict[str, object]] = {}
+    grouped: Dict[int, List[Dict[str, object]]] = {}
+    gap_seconds_limit = 2.0
+    min_event_sec = 2.0
+
+    def finalize_segment(track_id: int, state: Dict[str, object], container: List[Dict[str, object]]) -> None:
+        first_second = float(state["first_second"])
+        last_second = float(state["last_second"])
+        container.append(
+            {
+                "track_id": track_id,
+                "first_frame": int(state["first_frame"]),
+                "last_frame": int(state["last_frame"]),
+                "first_second": first_second,
+                "last_second": last_second,
+                "duration_second": max(0.0, last_second - first_second),
+                "first_timestamp_utc": str(state["first_timestamp_utc"]),
+                "last_timestamp_utc": str(state["last_timestamp_utc"]),
+                "first_timestamp_local": str(state["first_timestamp_local"]),
+                "last_timestamp_local": str(state["last_timestamp_local"]),
+                "detections": int(state["detections"]),
+                "zone_hits": int(state["zone_hits"]),
+                "max_confidence": float(state["max_confidence"]),
+            }
+        )
 
     with tracks_jsonl.open("r", encoding="utf-8") as f:
         for line in f:
@@ -235,7 +259,11 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
             if not row:
                 continue
 
-            data = json.loads(row)
+            try:
+                data = json.loads(row)
+            except json.JSONDecodeError:
+                continue
+
             track_id = int(data.get("track_id", -1))
             if track_id < 0:
                 continue
@@ -247,9 +275,12 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
             confidence = float(data.get("confidence", 0.0))
             in_zone = bool(data.get("in_package_zone", False))
 
-            state = grouped.get(track_id)
-            if state is None:
-                grouped[track_id] = {
+            segments = grouped.setdefault(track_id, [])
+            state = segments[-1] if segments else None
+
+            last_second = float(state["last_second"]) if state is not None else -1.0
+            if state is None or (elapsed_seconds - last_second) > gap_seconds_limit:
+                state = {
                     "track_id": track_id,
                     "first_frame": frame_index,
                     "last_frame": frame_index,
@@ -263,6 +294,7 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
                     "zone_hits": 1 if in_zone else 0,
                     "max_confidence": confidence,
                 }
+                segments.append(state)
                 continue
 
             state["detections"] = int(state["detections"]) + 1
@@ -284,26 +316,29 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
 
     events: List[PersonTrackAppearanceEvent] = []
     for track_id in sorted(grouped.keys()):
-        s = grouped[track_id]
-        first_second = float(s["first_second"])
-        last_second = float(s["last_second"])
-        events.append(
-            PersonTrackAppearanceEvent(
-                track_id=int(s["track_id"]),
-                first_frame=int(s["first_frame"]),
-                last_frame=int(s["last_frame"]),
-                first_second=first_second,
-                last_second=last_second,
-                duration_second=max(0.0, last_second - first_second),
-                first_timestamp_utc=str(s["first_timestamp_utc"]),
-                last_timestamp_utc=str(s["last_timestamp_utc"]),
-                first_timestamp_local=str(s["first_timestamp_local"]),
-                last_timestamp_local=str(s["last_timestamp_local"]),
-                detections=int(s["detections"]),
-                zone_hits=int(s["zone_hits"]),
-                max_confidence=float(s["max_confidence"]),
+        for segment_index, segment_state in enumerate(grouped[track_id], start=1):
+            duration_second = max(0.0, float(segment_state["last_second"]) - float(segment_state["first_second"]))
+            if duration_second < min_event_sec:
+                continue
+
+            events.append(
+                PersonTrackAppearanceEvent(
+                    track_id=track_id,
+                    segment_index=segment_index,
+                    first_frame=int(segment_state["first_frame"]),
+                    last_frame=int(segment_state["last_frame"]),
+                    first_second=float(segment_state["first_second"]),
+                    last_second=float(segment_state["last_second"]),
+                    duration_second=duration_second,
+                    first_timestamp_utc=str(segment_state["first_timestamp_utc"]),
+                    last_timestamp_utc=str(segment_state["last_timestamp_utc"]),
+                    first_timestamp_local=str(segment_state["first_timestamp_local"]),
+                    last_timestamp_local=str(segment_state["last_timestamp_local"]),
+                    detections=int(segment_state["detections"]),
+                    zone_hits=int(segment_state["zone_hits"]),
+                    max_confidence=float(segment_state["max_confidence"]),
+                )
             )
-        )
 
     return events
 
@@ -378,7 +413,7 @@ def main() -> None:
         )
         for e in track_events:
             print(
-                f"[ID {e.track_id}] {e.first_second:.2f}s -> {e.last_second:.2f}s "
+                f"[ID {e.track_id}#{e.segment_index}] {e.first_second:.2f}s -> {e.last_second:.2f}s "
                 f"(dur={e.duration_second:.2f}s, det={e.detections}, zone_hits={e.zone_hits})"
             )
         print(f"Saved: {out_path}")
