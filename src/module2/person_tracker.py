@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple
 import cv2
 import numpy as np
 import supervision as sv
+import torch
 from deep_sort.deep_sort import DeepSort
 from ultralytics import YOLO
 
@@ -37,6 +38,8 @@ class PersonTracker:
         self._force_gpu = str(self.repo_device).lower() not in {"cpu", "mps"}
         self._inference_device = self.repo_device
         self._cpu_fallback_active = False
+        self._use_half = bool(self._force_gpu and torch.cuda.is_available())
+        self._inference_imgsz = 640
         self.deepsort_min_confidence = tracking_cfg.repo_deepsort_min_confidence
         self.single_person_mode = bool(tracking_cfg.single_person_mode)
         self._stable_track_id = 1
@@ -149,7 +152,7 @@ class PersonTracker:
         return int(best_index)
 
     def _build_tracker(self, tracking_cfg: TrackingConfig):
-        use_cuda = bool(tracking_cfg.repo_deepsort_use_cuda and cv2.cuda.getCudaEnabledDeviceCount() > 0)
+        use_cuda = bool(tracking_cfg.repo_deepsort_use_cuda and torch.cuda.is_available())
         print(f"[INFO] DeepSORT CUDA enabled: {use_cuda}")
         return DeepSort(
             model_path=tracking_cfg.repo_deepsort_weights,
@@ -241,21 +244,24 @@ class PersonTracker:
 
     def _predict_person_detections(self, frame: np.ndarray) -> sv.Detections:
         if self._cpu_fallback_active:
-            result = self.model(
-                frame,
+            result = self.model.predict(
+                source=frame,
                 device="cpu",
                 classes=[self.PERSON_CLASS_ID],
                 conf=self.confidence_threshold,
+                imgsz=self._inference_imgsz,
                 verbose=False,
             )[0]
             return sv.Detections.from_ultralytics(result)
 
         try:
-            result = self.model(
-                frame,
+            result = self.model.predict(
+                source=frame,
                 device=self._inference_device,
                 classes=[self.PERSON_CLASS_ID],
                 conf=self.confidence_threshold,
+                half=self._use_half,
+                imgsz=self._inference_imgsz,
                 verbose=False,
             )[0]
         except Exception as exc:
@@ -267,11 +273,13 @@ class PersonTracker:
             print("[WARN] Falling back to CPU inference for subsequent frames.")
             self._cpu_fallback_active = True
             self._inference_device = "cpu"
-            result = self.model(
-                frame,
+            self._use_half = False
+            result = self.model.predict(
+                source=frame,
                 device="cpu",
                 classes=[self.PERSON_CLASS_ID],
                 conf=self.confidence_threshold,
+                imgsz=self._inference_imgsz,
                 verbose=False,
             )[0]
         return sv.Detections.from_ultralytics(result)

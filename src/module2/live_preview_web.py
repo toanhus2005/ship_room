@@ -19,19 +19,11 @@ def build_app(
     conf: float,
     iou: float,
     zone_points: list[tuple[int, int]],
+    process_width: int,
+    jpeg_quality: int,
+    status_poll_ms: int,
 ) -> Flask:
     app = Flask(__name__)
-
-    def make_tracker() -> PersonTracker:
-        return PersonTracker(
-            detection_cfg=DetectionConfig(
-                model_name=model_name,
-                confidence_threshold=conf,
-                iou_threshold=iou,
-            ),
-            tracking_cfg=TrackingConfig(track_buffer=30, match_threshold=0.8),
-            zone_cfg=ZoneConfig(package_zone_polygon=zone_points),
-        )
 
     cap_meta = cv2.VideoCapture(video_path)
     if not cap_meta.isOpened():
@@ -40,7 +32,34 @@ def build_app(
     if native_fps <= 0:
         native_fps = 25.0
     total_frames = int(cap_meta.get(cv2.CAP_PROP_FRAME_COUNT))
+    src_width = int(cap_meta.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
+    src_height = int(cap_meta.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
     cap_meta.release()
+
+    resize_scale = 1.0
+    if process_width > 0 and src_width > 0 and process_width < src_width:
+        resize_scale = process_width / float(src_width)
+
+    tracker_zone_points = [
+        (
+            int(round(x * resize_scale)),
+            int(round(y * resize_scale)),
+        )
+        for x, y in zone_points
+    ]
+    jpg_quality = int(max(35, min(95, jpeg_quality)))
+    poll_interval_ms = int(max(150, status_poll_ms))
+
+    def make_tracker() -> PersonTracker:
+        return PersonTracker(
+            detection_cfg=DetectionConfig(
+                model_name=model_name,
+                confidence_threshold=conf,
+            ),
+            tracking_cfg=TrackingConfig(track_buffer=30),
+            zone_cfg=ZoneConfig(package_zone_polygon=tracker_zone_points),
+        )
+
     total_duration = (total_frames / native_fps) if native_fps > 0 else 0.0
 
     state_lock = Lock()
@@ -141,6 +160,16 @@ def build_app(
                     tracker = make_tracker()
                     continue
 
+                if resize_scale < 1.0:
+                    frame = cv2.resize(
+                        frame,
+                        (
+                            int(round(frame.shape[1] * resize_scale)),
+                            int(round(frame.shape[0] * resize_scale)),
+                        ),
+                        interpolation=cv2.INTER_AREA,
+                    )
+
                 t0 = time.perf_counter()
                 events = tracker.process_frame(frame_idx, frame)
                 dt = max(1e-6, time.perf_counter() - t0)
@@ -157,7 +186,7 @@ def build_app(
                 view = frame
 
                 # Draw package zone border (yellow) for visual reference.
-                zone_polygon = np.array(zone_points, dtype=np.int32).reshape((-1, 1, 2))
+                zone_polygon = np.array(tracker_zone_points, dtype=np.int32).reshape((-1, 1, 2))
                 cv2.polylines(view, [zone_polygon], isClosed=True, color=(0, 255, 255), thickness=2)
 
                 for e in events:
@@ -201,7 +230,7 @@ def build_app(
                 with state_lock:
                     state["current_frame"] = int(frame_idx)
 
-                ok_jpg, buf = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                ok_jpg, buf = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), jpg_quality])
                 if not ok_jpg:
                     frame_idx += 1
                     continue
@@ -307,7 +336,7 @@ def build_app(
             " if(d.current_second!==undefined){"
             "  document.getElementById('status').textContent=(paused?'Paused':'Playing')+' | frame '+d.current_frame+' | '+d.current_second.toFixed(1)+'s';"
             " }"
-            "},300);"
+            f"}},{poll_interval_ms});"
             "</script>"
             "</body></html>"
         )
@@ -415,6 +444,24 @@ def main() -> None:
     parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument(
+        "--process-width",
+        type=int,
+        default=960,
+        help="Resize frame width before detection/tracking for higher FPS (0 = original size)",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=60,
+        help="Preview JPEG quality (lower is faster, range 35-95)",
+    )
+    parser.add_argument(
+        "--status-poll-ms",
+        type=int,
+        default=500,
+        help="Browser status polling interval in milliseconds",
+    )
+    parser.add_argument(
         "--zone",
         type=int,
         nargs="+",
@@ -434,6 +481,9 @@ def main() -> None:
         conf=args.conf,
         iou=args.iou,
         zone_points=zone_points,
+        process_width=args.process_width,
+        jpeg_quality=args.jpeg_quality,
+        status_poll_ms=args.status_poll_ms,
     )
     app.run(host=args.host, port=args.port, debug=False, threaded=True)
 
