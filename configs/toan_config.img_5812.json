@@ -24,7 +24,7 @@
         "repo_deepsort_min_confidence": 0.3
     },
     "zone": {
-        "package_zone_polygon": [[1060, 520], [1480, 520], [1480, 860], [1060, 860]]
+        "package_zone_polygon": [[1040, 440], [1460, 440], [1460, 780], [1040, 780]]
     },
     "output": {
         "events_jsonl": "artifacts/events/person_tracks.jsonl"

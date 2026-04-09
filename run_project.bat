@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 if "%~1"=="" (
-    set "CONFIG=configs\toan_config.sample3.json"
+    set "CONFIG=configs\toan_config.img_5812.json"
 ) else (
     set "CONFIG=%~1"
 )
@@ -46,7 +46,7 @@ if errorlevel 1 (
 
 for /f "usebackq delims=" %%S in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).video.source } catch { '' }"`) do set "VIDEO_SOURCE=%%S"
 if "%VIDEO_SOURCE%"=="" (
-    set "VIDEO_SOURCE=data/sample3.mp4"
+    set "VIDEO_SOURCE=data/IMG_5812.MOV"
 )
 
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.model_name } catch { '' }"`) do set "MODEL_NAME=%%M"
@@ -56,25 +56,12 @@ if "%MODEL_NAME%"=="" (
 
 for /f "usebackq delims=" %%C in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { (Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).detection.confidence_threshold } catch { '' }"`) do set "CONF_THRESHOLD=%%C"
 if "%CONF_THRESHOLD%"=="" (
-    set "CONF_THRESHOLD=0.35"
+    set "CONF_THRESHOLD=0.4"
 )
 
 for /f "usebackq delims=" %%Z in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $p=((Get-Content -Raw '%CONFIG%' | ConvertFrom-Json).zone.package_zone_polygon); ($p | ForEach-Object { $_[0]; $_[1] }) -join ' ' } catch { '' }"`) do set "ZONE_POINTS=%%Z"
 if "%ZONE_POINTS%"=="" (
-    set "ZONE_POINTS=200 150 1100 150 1100 650 200 650"
-)
-
-echo [INFO] Exporting person appearance timeline...
-echo %VIDEO_SOURCE%| findstr /r "^[0-9][0-9]*$" >nul
-if errorlevel 1 (
-    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --tracks-jsonl artifacts/events/person_tracks.jsonl --out artifacts/events/person_appearance_tour.json
-    if errorlevel 1 (
-        echo [WARN] Could not export person appearance timeline.
-    ) else (
-        echo [INFO] Exported: artifacts/events/person_appearance_tour.json
-    )
-) else (
-    echo [WARN] Skip timeline export because source is a live camera index: %VIDEO_SOURCE%
+    set "ZONE_POINTS=1040 440 1460 440 1460 780 1040 780"
 )
 
 echo [INFO] Starting live preview web server...
@@ -89,6 +76,19 @@ python -m src.pipeline_toan --config "%CONFIG%"
 if errorlevel 1 (
     echo [ERROR] Pipeline execution failed.
     exit /b 1
+)
+
+echo [INFO] Exporting person appearance timeline...
+echo %VIDEO_SOURCE%| findstr /r "^[0-9][0-9]*$" >nul
+if errorlevel 1 (
+    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --device 0 --tracks-jsonl artifacts/events/person_tracks.jsonl --out artifacts/events/person_appearance_tour.json
+    if errorlevel 1 (
+        echo [WARN] Could not export person appearance timeline.
+    ) else (
+        echo [INFO] Exported: artifacts/events/person_appearance_tour.json
+    )
+) else (
+    echo [WARN] Skip timeline export because source is a live camera index: %VIDEO_SOURCE%
 )
 
 echo [DONE] Pipeline completed. Live preview was running during processing at http://127.0.0.1:8787

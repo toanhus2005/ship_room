@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class VideoSourceConfig(BaseModel):
     source: str = Field(
-        "data/sample2.mp4",
+        "data/IMG_5812.MOV",
         description="RTSP URL, camera index (as string), or path to video file",
     )
     timezone: str = "Asia/Ho_Chi_Minh"
@@ -41,10 +41,10 @@ class TrackingConfig(BaseModel):
 class ZoneConfig(BaseModel):
     # Polygon points in image coordinates: [[x1, y1], [x2, y2], ...]
     package_zone_polygon: List[Tuple[int, int]] = [
-        (200, 150),
-        (1100, 150),
-        (1100, 650),
-        (200, 650),
+        (1040, 440),
+        (1460, 440),
+        (1460, 780),
+        (1040, 780),
     ]
 
 

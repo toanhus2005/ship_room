@@ -32,6 +32,12 @@ class PersonTracker:
         tracking_cfg: TrackingConfig,
         zone_cfg: ZoneConfig,
     ) -> None:
+        if torch.cuda.is_available():
+            # Favor throughput for fixed-size realtime inference workloads.
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
         self.model = YOLO(detection_cfg.model_name)
         self.confidence_threshold = detection_cfg.confidence_threshold
         self.repo_device = detection_cfg.repo_device

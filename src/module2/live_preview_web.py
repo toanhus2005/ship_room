@@ -13,6 +13,13 @@ from src.config import DetectionConfig, TrackingConfig, ZoneConfig
 from src.module2.person_tracker import PersonTracker
 
 
+def _default_zone_cli_values() -> list[int]:
+    values: list[int] = []
+    for x, y in ZoneConfig().package_zone_polygon:
+        values.extend([int(x), int(y)])
+    return values
+
+
 def build_app(
     video_path: str,
     model_name: str,
@@ -465,7 +472,7 @@ def main() -> None:
         "--zone",
         type=int,
         nargs="+",
-        default=[200, 150, 1100, 150, 1100, 650, 200, 650],
+        default=_default_zone_cli_values(),
         help="Package zone polygon as x1 y1 x2 y2 ...",
     )
     args = parser.parse_args()
