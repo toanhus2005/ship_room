@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Dict
 
+import cv2
 from pydantic import ValidationError
 
 from src.config import ToanConfig, build_shared_config, ensure_parent
@@ -28,12 +29,18 @@ def resolve_config(
     config_path: str | None,
     video_source: str | None,
     timezone: str | None,
+    force_track_buffer: int | None = None,
+    process_width: int | None = None,
 ) -> ToanConfig:
     cfg = load_config(Path(config_path)) if config_path else build_shared_config()
     if video_source:
         cfg.video.source = video_source
     if timezone:
         cfg.video.timezone = timezone
+    if force_track_buffer is not None and int(force_track_buffer) > 0:
+        cfg.tracking.track_buffer = int(force_track_buffer)
+    if process_width is not None:
+        cfg.stream.process_width = int(process_width)
     return cfg
 
 
@@ -46,9 +53,23 @@ def run_pipeline(config: ToanConfig) -> None:
 
     ensure_parent(config.output.events_jsonl)
 
+    # Compute frame resize scale to match preview processing
+    process_width = getattr(config.stream, 'process_width', 960)
+    resize_scale = 1.0
+
     summary: Dict[int, Dict[str, int]] = {}
     write_buffer: list[str] = []
     write_batch_size = 20
+    min_track_confidence = max(
+        0.0,
+        float(
+            getattr(
+                config.tracking,
+                "repo_track_min_confidence",
+                getattr(config.tracking, "repo_deepsort_min_confidence", 0.0),
+            )
+        ),
+    )
     total_events = 0
     interrupted = False
     start_utc = datetime.now(UTC)
@@ -87,9 +108,22 @@ def run_pipeline(config: ToanConfig) -> None:
         iterator = tqdm(packets, desc="Processing Video", unit="frame") if tqdm else packets
 
         for packet in iterator:
-            events = tracker.process_frame(packet.frame_index, packet.frame)
+            # Resize frame before processing to match preview detection behavior
+            frame_to_process = packet.frame
+            if process_width > 0:
+                h, w = packet.frame.shape[:2]
+                if w > process_width:
+                    resize_scale = process_width / float(w)
+                    new_h = int(round(h * resize_scale))
+                    frame_to_process = cv2.resize(packet.frame, (process_width, new_h), interpolation=cv2.INTER_LINEAR)
+            
+            events = tracker.process_frame(packet.frame_index, frame_to_process)
 
             for e in events:
+                # Drop unstable tracks that cannot be matched back to a confident detection.
+                if float(e.confidence) < min_track_confidence:
+                    continue
+
                 row = asdict(e)
                 # packet timestamps are derived from video position/frame index, avoiding wall-clock drift.
                 elapsed_seconds = (packet.timestamp_utc - start_utc).total_seconds()
@@ -140,6 +174,18 @@ def main() -> None:
         default="",
         help="Optional timezone override for timestamps",
     )
+    parser.add_argument(
+        "--force-track-buffer",
+        type=int,
+        default=0,
+        help="Optional override for tracking.track_buffer (use 30 to match live preview behavior)",
+    )
+    parser.add_argument(
+        "--process-width",
+        type=int,
+        default=0,
+        help="Optional frame width resize before detection (default 960 to match live preview, 0 = original size)",
+    )
     args = parser.parse_args()
 
     try:
@@ -147,6 +193,8 @@ def main() -> None:
             config_path=args.config or None,
             video_source=args.video or None,
             timezone=args.timezone or None,
+            force_track_buffer=args.force_track_buffer or None,
+            process_width=args.process_width or None,
         )
         run_pipeline(cfg)
     except FileNotFoundError as e:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 import supervision as sv
 import torch
-from deep_sort.deep_sort import DeepSort
+import yaml
 from ultralytics import YOLO
 
 from src.config import DetectionConfig, TrackingConfig, ZoneConfig
@@ -24,7 +25,6 @@ class PersonTrackEvent:
 
 class PersonTracker:
     PERSON_CLASS_ID = 0  # COCO class 0 = person
-    TRACK_CONF_MIN_IOU = 0.3
 
     def __init__(
         self,
@@ -46,14 +46,14 @@ class PersonTracker:
         self._cpu_fallback_active = False
         self._use_half = bool(self._force_gpu and torch.cuda.is_available())
         self._inference_imgsz = 640
-        self.deepsort_min_confidence = tracking_cfg.repo_deepsort_min_confidence
+        self.min_track_confidence = tracking_cfg.repo_track_min_confidence
         self.single_person_mode = bool(tracking_cfg.single_person_mode)
         self._stable_track_id = 1
         self._stable_source_track_id: int | None = None
         self._stable_box: Tuple[float, float, float, float] | None = None
+        self._tracker_config_path = self._build_tracker_config(tracking_cfg)
 
         print(f"[INFO] YOLO inference device requested: {self.repo_device}")
-        self.tracker = self._build_tracker(tracking_cfg)
 
         polygon = np.array(zone_cfg.package_zone_polygon, dtype=np.int32)
         try:
@@ -66,11 +66,7 @@ class PersonTracker:
             self.zone = sv.PolygonZone(polygon=polygon)
 
     def process_frame(self, frame_index: int, frame: np.ndarray) -> List[PersonTrackEvent]:
-        det = self._predict_person_detections(frame)
-        if len(det) == 0:
-            return []
-
-        track_boxes, track_ids, track_confs = self._update_tracks(det, frame)
+        track_boxes, track_ids, track_confs = self._track_persons(frame)
 
         if not track_boxes:
             return []
@@ -129,7 +125,7 @@ class PersonTracker:
         if not track_boxes:
             return 0
 
-        # Keep the same DeepSORT id when available to reduce ID switching.
+        # Keep the same tracker id when available to reduce ID switching.
         if self._stable_source_track_id is not None:
             for i, tid in enumerate(track_ids):
                 if int(tid) == self._stable_source_track_id:
@@ -157,90 +153,95 @@ class PersonTracker:
 
         return int(best_index)
 
-    def _build_tracker(self, tracking_cfg: TrackingConfig):
-        use_cuda = bool(tracking_cfg.repo_deepsort_use_cuda and torch.cuda.is_available())
-        print(f"[INFO] DeepSORT CUDA enabled: {use_cuda}")
-        return DeepSort(
-            model_path=tracking_cfg.repo_deepsort_weights,
-            max_dist=tracking_cfg.deepsort_max_cosine_distance,
-            min_confidence=tracking_cfg.repo_deepsort_min_confidence,
-            max_iou_distance=tracking_cfg.deepsort_max_iou_distance,
-            max_age=tracking_cfg.track_buffer,
-            n_init=tracking_cfg.deepsort_n_init,
-            nn_budget=tracking_cfg.deepsort_nn_budget,
-            use_cuda=use_cuda,
-        )
+    def _build_tracker_config(self, tracking_cfg: TrackingConfig) -> str:
+        tracker_cfg = {
+            "tracker_type": "bytetrack",
+            "track_high_thresh": float(tracking_cfg.bytetrack_high_thresh),
+            "track_low_thresh": float(tracking_cfg.bytetrack_low_thresh),
+            "new_track_thresh": float(tracking_cfg.bytetrack_new_track_thresh),
+            "track_buffer": int(tracking_cfg.track_buffer),
+            "match_thresh": float(tracking_cfg.bytetrack_match_thresh),
+            "fuse_score": bool(tracking_cfg.bytetrack_fuse_score),
+        }
 
-    def _update_tracks(
+        config_path = Path("artifacts") / "bytetrack_runtime.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(yaml.safe_dump(tracker_cfg, sort_keys=False), encoding="utf-8")
+        print(f"[INFO] ByteTrack config path: {config_path}")
+        return str(config_path)
+
+    def _track_persons(
         self,
-        det: sv.Detections,
         frame: np.ndarray,
     ) -> Tuple[List[Tuple[float, float, float, float]], List[int], List[float]]:
-        bboxes_xywh: List[List[float]] = []
-        for xyxy in det.xyxy:
-            x1, y1, x2, y2 = [float(v) for v in xyxy]
-            w = max(1.0, x2 - x1)
-            h = max(1.0, y2 - y1)
-            cx = x1 + (w * 0.5)
-            cy = y1 + (h * 0.5)
-            bboxes_xywh.append([cx, cy, w, h])
-
-        if not bboxes_xywh:
+        result = self._run_track(frame)
+        boxes = getattr(result, "boxes", None)
+        if boxes is None or len(boxes) == 0 or boxes.id is None:
             return [], [], []
 
-        confs = np.asarray(det.confidence, dtype=np.float32)
-        tracks = self.tracker.update(np.asarray(bboxes_xywh, dtype=np.float32), confs, frame)
-
-        if tracks is None or len(tracks) == 0:
-            return [], [], []
+        xyxy = boxes.xyxy.detach().cpu().numpy()
+        track_ids_np = boxes.id.detach().cpu().numpy().astype(np.int32)
+        if boxes.conf is None:
+            confs = np.ones((xyxy.shape[0],), dtype=np.float32)
+        else:
+            confs = boxes.conf.detach().cpu().numpy().astype(np.float32)
 
         track_boxes: List[Tuple[float, float, float, float]] = []
         track_ids: List[int] = []
-        for row in tracks:
-            x1, y1, x2, y2, track_id = row.tolist()
+        track_confs: List[float] = []
+        for i, row in enumerate(xyxy):
+            x1, y1, x2, y2 = row.tolist()
             track_boxes.append((float(x1), float(y1), float(x2), float(y2)))
-            track_ids.append(int(track_id))
+            track_ids.append(int(track_ids_np[i]))
+            track_confs.append(float(confs[i]))
 
-        track_confs = self._estimate_track_confidences(track_boxes, det)
         return track_boxes, track_ids, track_confs
 
-    def _estimate_track_confidences(
-        self,
-        track_boxes: List[Tuple[float, float, float, float]],
-        det: sv.Detections,
-    ) -> List[float]:
-        if len(det) == 0 or not track_boxes:
-            return [0.0] * len(track_boxes)
+    def _run_track(self, frame: np.ndarray):
+        if self._cpu_fallback_active:
+            return self.model.track(
+                source=frame,
+                device="cpu",
+                classes=[self.PERSON_CLASS_ID],
+                conf=self.confidence_threshold,
+                imgsz=self._inference_imgsz,
+                persist=True,
+                tracker=self._tracker_config_path,
+                verbose=False,
+            )[0]
 
-        track_xyxy = np.asarray(track_boxes, dtype=np.float32)
-        det_xyxy = np.asarray(det.xyxy, dtype=np.float32)
-        det_conf = np.asarray(det.confidence, dtype=np.float32)
-
-        # Vectorized IoU matrix: (n_tracks, n_detections)
-        t = track_xyxy[:, None, :]
-        d = det_xyxy[None, :, :]
-
-        ix1 = np.maximum(t[..., 0], d[..., 0])
-        iy1 = np.maximum(t[..., 1], d[..., 1])
-        ix2 = np.minimum(t[..., 2], d[..., 2])
-        iy2 = np.minimum(t[..., 3], d[..., 3])
-
-        iw = np.clip(ix2 - ix1, a_min=0.0, a_max=None)
-        ih = np.clip(iy2 - iy1, a_min=0.0, a_max=None)
-        inter = iw * ih
-
-        t_area = np.clip((track_xyxy[:, 2] - track_xyxy[:, 0]) * (track_xyxy[:, 3] - track_xyxy[:, 1]), a_min=1.0, a_max=None)
-        d_area = np.clip((det_xyxy[:, 2] - det_xyxy[:, 0]) * (det_xyxy[:, 3] - det_xyxy[:, 1]), a_min=1.0, a_max=None)
-        union = np.clip(t_area[:, None] + d_area[None, :] - inter, a_min=1.0, a_max=None)
-        iou_matrix = inter / union
-
-        best_det_idx = np.argmax(iou_matrix, axis=1)
-        best_iou = iou_matrix[np.arange(iou_matrix.shape[0]), best_det_idx]
-
-        confs = np.zeros((len(track_boxes),), dtype=np.float32)
-        valid = best_iou >= self.TRACK_CONF_MIN_IOU
-        confs[valid] = det_conf[best_det_idx[valid]]
-        return [float(v) for v in confs]
+        try:
+            return self.model.track(
+                source=frame,
+                device=self._inference_device,
+                classes=[self.PERSON_CLASS_ID],
+                conf=self.confidence_threshold,
+                half=self._use_half,
+                imgsz=self._inference_imgsz,
+                persist=True,
+                tracker=self._tracker_config_path,
+                verbose=False,
+            )[0]
+        except Exception as exc:
+            if self._force_gpu:
+                raise RuntimeError(
+                    f"GPU tracking failed on device '{self.repo_device}'. "
+                    "Please verify CUDA-capable Torch is installed and GPU is available."
+                ) from exc
+            print("[WARN] Falling back to CPU tracking for subsequent frames.")
+            self._cpu_fallback_active = True
+            self._inference_device = "cpu"
+            self._use_half = False
+            return self.model.track(
+                source=frame,
+                device="cpu",
+                classes=[self.PERSON_CLASS_ID],
+                conf=self.confidence_threshold,
+                imgsz=self._inference_imgsz,
+                persist=True,
+                tracker=self._tracker_config_path,
+                verbose=False,
+            )[0]
 
     def has_person(self, frame: np.ndarray) -> bool:
         det = self._predict_person_detections(frame)

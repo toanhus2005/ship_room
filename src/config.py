@@ -16,6 +16,7 @@ class VideoSourceConfig(BaseModel):
 
 class StreamConfig(BaseModel):
     sample_fps: float = 5.0
+    process_width: int = 960  # Match preview default (0 = original size)
     output_frames_dir: Path = Path("artifacts/frames")
     save_sampled_frames: bool = False
 
@@ -28,13 +29,12 @@ class DetectionConfig(BaseModel):
 
 class TrackingConfig(BaseModel):
     track_buffer: int = 150
-    deepsort_n_init: int = 3
-    deepsort_max_iou_distance: float = 0.7
-    deepsort_max_cosine_distance: float = 0.45
-    deepsort_nn_budget: int = 100
-    repo_deepsort_weights: str = "deep_sort/deep/checkpoint/ckpt.t7"
-    repo_deepsort_use_cuda: bool = True
-    repo_deepsort_min_confidence: float = 0.3
+    bytetrack_high_thresh: float = 0.5
+    bytetrack_low_thresh: float = 0.1
+    bytetrack_new_track_thresh: float = 0.5
+    bytetrack_match_thresh: float = 0.8
+    bytetrack_fuse_score: bool = True
+    repo_track_min_confidence: float = 0.3
     single_person_mode: bool = False
 
 

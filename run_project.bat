@@ -72,7 +72,7 @@ timeout /t 2 >nul
 start "" "http://127.0.0.1:8787"
 
 echo [INFO] Running pipeline with config: %CONFIG%
-python -m src.pipeline_toan --config "%CONFIG%"
+python -m src.pipeline_toan --config "%CONFIG%" --force-track-buffer 30 --process-width 960
 if errorlevel 1 (
     echo [ERROR] Pipeline execution failed.
     exit /b 1
@@ -81,7 +81,7 @@ if errorlevel 1 (
 echo [INFO] Exporting person appearance timeline...
 echo %VIDEO_SOURCE%| findstr /r "^[0-9][0-9]*$" >nul
 if errorlevel 1 (
-    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --device 0 --tracks-jsonl artifacts/events/person_tracks.jsonl --out artifacts/events/person_appearance_tour.json
+    python -m src.module1.person_event_tour --video "%VIDEO_SOURCE%" --model "%MODEL_NAME%" --device 0 --tracks-jsonl artifacts/events/person_tracks.jsonl --gap-seconds 3.0 --out artifacts/events/person_appearance_tour.json
     if errorlevel 1 (
         echo [WARN] Could not export person appearance timeline.
     ) else (

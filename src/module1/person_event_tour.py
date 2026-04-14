@@ -6,7 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -41,6 +41,10 @@ class PersonTrackAppearanceEvent:
     detections: int
     zone_hits: int
     max_confidence: float
+
+
+def _round3(value: float) -> float:
+    return round(float(value), 3)
 
 
 class PersonEventTour:
@@ -224,34 +228,16 @@ class PersonEventTour:
             cap.release()
 
 
-def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppearanceEvent]:
+def build_track_appearance_events(
+    tracks_jsonl: Path,
+    gap_seconds_limit: float = 2.0,
+    min_event_sec: float = 2.0,
+    min_detections: int = 3,
+) -> List[PersonTrackAppearanceEvent]:
     if not tracks_jsonl.exists():
         raise FileNotFoundError(f"Tracking file not found: {tracks_jsonl}")
 
-    grouped: Dict[int, List[Dict[str, object]]] = {}
-    gap_seconds_limit = 2.0
-    min_event_sec = 2.0
-
-    def finalize_segment(track_id: int, state: Dict[str, object], container: List[Dict[str, object]]) -> None:
-        first_second = float(state["first_second"])
-        last_second = float(state["last_second"])
-        container.append(
-            {
-                "track_id": track_id,
-                "first_frame": int(state["first_frame"]),
-                "last_frame": int(state["last_frame"]),
-                "first_second": first_second,
-                "last_second": last_second,
-                "duration_second": max(0.0, last_second - first_second),
-                "first_timestamp_utc": str(state["first_timestamp_utc"]),
-                "last_timestamp_utc": str(state["last_timestamp_utc"]),
-                "first_timestamp_local": str(state["first_timestamp_local"]),
-                "last_timestamp_local": str(state["last_timestamp_local"]),
-                "detections": int(state["detections"]),
-                "zone_hits": int(state["zone_hits"]),
-                "max_confidence": float(state["max_confidence"]),
-            }
-        )
+    rows_by_track: Dict[int, List[Dict[str, Any]]] = {}
 
     with tracks_jsonl.open("r", encoding="utf-8") as f:
         for line in f:
@@ -275,72 +261,83 @@ def build_track_appearance_events(tracks_jsonl: Path) -> List[PersonTrackAppeara
             confidence = float(data.get("confidence", 0.0))
             in_zone = bool(data.get("in_package_zone", False))
 
-            segments = grouped.setdefault(track_id, [])
-            state = segments[-1] if segments else None
-
-            last_second = float(state["last_second"]) if state is not None else -1.0
-            if state is None or (elapsed_seconds - last_second) > gap_seconds_limit:
-                state = {
-                    "track_id": track_id,
-                    "first_frame": frame_index,
-                    "last_frame": frame_index,
-                    "first_second": elapsed_seconds,
-                    "last_second": elapsed_seconds,
-                    "first_timestamp_utc": timestamp_utc,
-                    "last_timestamp_utc": timestamp_utc,
-                    "first_timestamp_local": timestamp_local,
-                    "last_timestamp_local": timestamp_local,
-                    "detections": 1,
-                    "zone_hits": 1 if in_zone else 0,
-                    "max_confidence": confidence,
-                }
-                segments.append(state)
+            if elapsed_seconds < 0:
                 continue
 
-            state["detections"] = int(state["detections"]) + 1
-            if in_zone:
-                state["zone_hits"] = int(state["zone_hits"]) + 1
-            state["max_confidence"] = max(float(state["max_confidence"]), confidence)
-
-            if frame_index < int(state["first_frame"]):
-                state["first_frame"] = frame_index
-                state["first_second"] = elapsed_seconds
-                state["first_timestamp_utc"] = timestamp_utc
-                state["first_timestamp_local"] = timestamp_local
-
-            if frame_index > int(state["last_frame"]):
-                state["last_frame"] = frame_index
-                state["last_second"] = elapsed_seconds
-                state["last_timestamp_utc"] = timestamp_utc
-                state["last_timestamp_local"] = timestamp_local
+            rows_by_track.setdefault(track_id, []).append(
+                {
+                    "frame_index": frame_index,
+                    "elapsed_seconds": elapsed_seconds,
+                    "timestamp_utc": timestamp_utc,
+                    "timestamp_local": timestamp_local,
+                    "confidence": confidence,
+                    "in_zone": in_zone,
+                }
+            )
 
     events: List[PersonTrackAppearanceEvent] = []
-    for track_id in sorted(grouped.keys()):
-        for segment_index, segment_state in enumerate(grouped[track_id], start=1):
-            duration_second = max(0.0, float(segment_state["last_second"]) - float(segment_state["first_second"]))
+    for track_id in sorted(rows_by_track.keys()):
+        rows = sorted(
+            rows_by_track[track_id],
+            key=lambda r: (float(r["elapsed_seconds"]), int(r["frame_index"])),
+        )
+
+        raw_segments: List[List[Dict[str, Any]]] = []
+        current_segment: List[Dict[str, Any]] = []
+
+        for row in rows:
+            if not current_segment:
+                current_segment.append(row)
+                continue
+
+            gap = float(row["elapsed_seconds"]) - float(current_segment[-1]["elapsed_seconds"])
+            if gap > gap_seconds_limit:
+                raw_segments.append(current_segment)
+                current_segment = [row]
+            else:
+                current_segment.append(row)
+
+        if current_segment:
+            raw_segments.append(current_segment)
+
+        kept_segments: List[List[Dict[str, Any]]] = []
+        for segment in raw_segments:
+            first = segment[0]
+            last = segment[-1]
+            duration_second = max(0.0, float(last["elapsed_seconds"]) - float(first["elapsed_seconds"]))
             if duration_second < min_event_sec:
                 continue
+            if len(segment) < min_detections:
+                continue
+            kept_segments.append(segment)
+
+        for segment_index, segment in enumerate(kept_segments, start=1):
+            first = segment[0]
+            last = segment[-1]
+            duration_second = max(0.0, float(last["elapsed_seconds"]) - float(first["elapsed_seconds"]))
+            zone_hits = sum(1 for r in segment if bool(r["in_zone"]))
+            max_confidence = max(float(r["confidence"]) for r in segment)
 
             events.append(
                 PersonTrackAppearanceEvent(
                     track_id=track_id,
                     segment_index=segment_index,
-                    first_frame=int(segment_state["first_frame"]),
-                    last_frame=int(segment_state["last_frame"]),
-                    first_second=float(segment_state["first_second"]),
-                    last_second=float(segment_state["last_second"]),
-                    duration_second=duration_second,
-                    first_timestamp_utc=str(segment_state["first_timestamp_utc"]),
-                    last_timestamp_utc=str(segment_state["last_timestamp_utc"]),
-                    first_timestamp_local=str(segment_state["first_timestamp_local"]),
-                    last_timestamp_local=str(segment_state["last_timestamp_local"]),
-                    detections=int(segment_state["detections"]),
-                    zone_hits=int(segment_state["zone_hits"]),
-                    max_confidence=float(segment_state["max_confidence"]),
+                    first_frame=int(first["frame_index"]),
+                    last_frame=int(last["frame_index"]),
+                    first_second=_round3(float(first["elapsed_seconds"])),
+                    last_second=_round3(float(last["elapsed_seconds"])),
+                    duration_second=_round3(duration_second),
+                    first_timestamp_utc=str(first["timestamp_utc"]),
+                    last_timestamp_utc=str(last["timestamp_utc"]),
+                    first_timestamp_local=str(first["timestamp_local"]),
+                    last_timestamp_local=str(last["timestamp_local"]),
+                    detections=int(len(segment)),
+                    zone_hits=int(zone_hits),
+                    max_confidence=_round3(max_confidence),
                 )
             )
 
-    return events
+    return sorted(events, key=lambda e: (e.first_second, e.track_id, e.segment_index))
 
 
 def main() -> None:
@@ -381,6 +378,24 @@ def main() -> None:
         default="",
         help="Optional tracking JSONL path to export per-track appearance events",
     )
+    parser.add_argument(
+        "--gap-seconds",
+        type=float,
+        default=2.0,
+        help="Max gap (sec) inside one track segment before splitting appearance events",
+    )
+    parser.add_argument(
+        "--min-track-event-seconds",
+        type=float,
+        default=2.0,
+        help="Minimum duration (sec) to keep a track appearance segment",
+    )
+    parser.add_argument(
+        "--min-track-detections",
+        type=int,
+        default=3,
+        help="Minimum detection count to keep a track appearance segment",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.out)
@@ -388,13 +403,28 @@ def main() -> None:
 
     tracks_jsonl_path = Path(args.tracks_jsonl) if args.tracks_jsonl else None
     if tracks_jsonl_path and tracks_jsonl_path.exists():
-        track_events = build_track_appearance_events(tracks_jsonl=tracks_jsonl_path)
+        track_events = build_track_appearance_events(
+            tracks_jsonl=tracks_jsonl_path,
+            gap_seconds_limit=max(0.1, float(args.gap_seconds)),
+            min_event_sec=max(0.0, float(args.min_track_event_seconds)),
+            min_detections=max(1, int(args.min_track_detections)),
+        )
+        unique_track_ids = sorted({e.track_id for e in track_events})
+        total_zone_hits = int(sum(e.zone_hits for e in track_events))
         payload = {
             "video": args.video,
             "source_tracks_jsonl": str(tracks_jsonl_path),
             "generated_at_utc": datetime.now(UTC).isoformat(),
+            "criteria": {
+                "gap_seconds": _round3(max(0.1, float(args.gap_seconds))),
+                "min_track_event_seconds": _round3(max(0.0, float(args.min_track_event_seconds))),
+                "min_track_detections": int(max(1, int(args.min_track_detections))),
+            },
             "track_events": [asdict(e) for e in track_events],
             "track_count": len(track_events),
+            "unique_track_ids": unique_track_ids,
+            "unique_track_count": len(unique_track_ids),
+            "total_zone_hits": total_zone_hits,
             "first_appearance_second": track_events[0].first_second if track_events else None,
             "first_appearance_frame": track_events[0].first_frame if track_events else None,
         }
