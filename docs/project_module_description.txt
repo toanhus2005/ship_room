@@ -1,0 +1,122 @@
+BAO CAO CHI TIET DU AN: SHIP ROOM MONITORING (CAP NHAT THEO MA NGUON HIEN TAI)
+Ngay cap nhat: 2026-06-11
+
+1) MUC TIEU DU AN
+Du an xay dung he thong giamsat phong/khu dong goi theo pipeline tu dong:
+- Doc video file, camera index hoac RTSP.
+- Phat hien person tren tung frame bang YOLOv8.
+- Gan tracking ID bang ByteTrack de duy tri dau vet qua nhieu frame.
+- Kiem tra nguoi co vao package_zone hay khong.
+- Xuat JSONL su kien va JSON timeline de phan tich, xem lai va preview nhanh.
+
+2) CAU TRUC VA VAI TRO CAC MODULE
+ship-room-monitoring/
+|- README.md
+|- requirements.txt
+|- run_project.bat
+|- run_project.cmd
+|- run_preview.bat
+|- run_preview.cmd
+|- yolov8m.pt
+|- yolov8n.pt
+|- artifacts/
+|  |- bytetrack_runtime.yaml
+|  |- events/
+|  |  |- person_tracks.jsonl
+|  |  `- person_appearance_tour.json
+|  |- preview_frames/
+|  `- videos/
+|- configs/
+|  |- toan_config.example.json
+|  |- toan_config.img_5812.json
+|  |- toan_config.sample1.json
+|  |- toan_config.sample2.json
+|  `- toan_config.sample3.json
+|- data/
+|- docs/
+|  `- project_module_description.txt
+|- src/
+|  |- config.py
+|  |- pipeline_toan.py
+|  |- module1/
+|  |  |- video_input.py
+|  |  `- person_event_tour.py
+|  `- module2/
+|     |- person_tracker.py
+|     `- live_preview_web.py
+
+3) MO TA CAC THANH PHAN CHINH
+- src/config.py: schema Pydantic va default value cho video, stream, detection, tracking, zone va output.
+- src/module1/video_input.py: mo nguon video, sample frame theo sample_fps, tao timestamp UTC/local.
+- src/module2/person_tracker.py: YOLO detect person + ByteTrack + trigger zone.
+- src/pipeline_toan.py: pipeline batch offline, ghi person_tracks.jsonl va tong hop summary.
+- src/module1/person_event_tour.py: tong hop timeline xuat hien, uu tien doc tu tracks JSONL neu co.
+- src/module2/live_preview_web.py: preview web Flask + MJPEG, co pause/seek/skip-next-person.
+- run_project.bat / run_project.cmd: chay full flow.
+- run_preview.bat / run_preview.cmd: chay preview-only flow.
+
+4) LUONG XU LY HIEN TAI
+Video/Cam -> Detect Person (YOLOv8) -> Track ID (ByteTrack) -> Zone Check -> JSONL + Timeline + Web Preview
+
+5) CAU HINH CHINH
+Schema config lay tu src/config.py:
+- VideoSourceConfig: source, timezone.
+- StreamConfig: sample_fps, process_width, output_frames_dir, save_sampled_frames.
+- DetectionConfig: model_name, confidence_threshold, repo_device.
+- TrackingConfig: track_buffer, bytetrack_high_thresh, bytetrack_low_thresh, bytetrack_new_track_thresh, bytetrack_match_thresh, bytetrack_fuse_score, repo_track_min_confidence, single_person_mode.
+- ZoneConfig: package_zone_polygon.
+- OutputConfig: events_jsonl.
+
+Config mac dinh dang dung:
+- video.source = data/IMG_5812.MOV
+- detection.model_name = yolov8m.pt
+- detection.confidence_threshold = 0.3
+- tracking.bytetrack_* theo ByteTrack runtime config
+- output.events_jsonl = artifacts/events/person_tracks.jsonl
+
+6) OUTPUT VA ARTIFACTS
+- artifacts/events/person_tracks.jsonl: su kien theo frame/track.
+- artifacts/events/person_appearance_tour.json: timeline tong hop.
+- artifacts/bytetrack_runtime.yaml: file runtime ByteTrack duoc ghi tu person_tracker.py.
+- artifacts/preview_frames/: anh preview neu co sinh ra trong qua trinh chay.
+
+Moi dong trong person_tracks.jsonl gom cac truong chinh:
+- frame_index
+- track_id
+- xyxy
+- confidence
+- in_package_zone
+- timestamp_utc
+- timestamp_local
+- elapsed_seconds
+
+7) SCRIPT CHAY NHANH
+- run_project.cmd: full pipeline tren Windows.
+- run_project.bat: wrapper cho cmd.
+- run_preview.cmd: preview only.
+- run_preview.bat: wrapper cho cmd, co xu ly port 8787 neu bi chiem.
+
+8) THU MUC QUAN TRONG
+- configs/: file config mau va file config chinh.
+- data/: video input.
+- artifacts/: du lieu sinh ra khi chay.
+- src/: ma nguon chinh.
+- docs/: tai lieu du an.
+- yolov8m.pt va yolov8n.pt: weight YOLO.
+
+9) LOI THUONG GAP VA CACH XU LY
+Khong mo duoc video:
+- Kiem tra lai video.source trong config.
+- Neu dung camera, dung dang chuoi so: "0", "1".
+
+CUDA khong available:
+- Pipeline van chay tiep tren CPU.
+- De chay CPU ro rang, dat detection.repo_device = "cpu".
+
+Port 8787 da bi chiem:
+- run_preview.bat co co che giai phong port.
+- Neu van loi, dong process dang su dung cong nay va chay lai.
+
+10) GHI CHU PHIEN BAN
+Tai lieu nay duoc cap nhat de khop voi code hien tai trong workspace.
+He thong hien tai su dung ByteTrack, khong con phu thuoc vao DeepSORT trong pipeline chinh.
