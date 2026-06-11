@@ -180,10 +180,8 @@ Neu khong co `--tracks-jsonl`, module se scan video truc tiep bang detector.
 ## 9) Thu muc quan trong
 - `configs/`: file config mau.
 - `data/`: video input.
-- `artifacts/events/`: JSONL + timeline JSON sau khi chay.
-- `artifacts/preview_frames/`: tai nguyen preview.
+- `artifacts/`: output sinh ra khi chay (JSONL, timeline JSON, preview, YAML runtime).
 - `yolov8m.pt`, `yolov8n.pt`: weight YOLO.
-- `deep_sort/`: source DeepSORT cu, duoc giu lai de tham khao (khong con duoc goi trong pipeline hien tai).
 
 ## 10) Loi thuong gap va cach xu ly
 ### Khong mo duoc video
