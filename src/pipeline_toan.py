@@ -60,16 +60,7 @@ def run_pipeline(config: ToanConfig) -> None:
     summary: Dict[int, Dict[str, int]] = {}
     write_buffer: list[str] = []
     write_batch_size = 20
-    min_track_confidence = max(
-        0.0,
-        float(
-            getattr(
-                config.tracking,
-                "repo_track_min_confidence",
-                getattr(config.tracking, "repo_deepsort_min_confidence", 0.0),
-            )
-        ),
-    )
+    min_track_confidence = max(0.0, float(config.tracking.repo_track_min_confidence))
     total_events = 0
     interrupted = False
     start_utc = datetime.now(UTC)
